@@ -27,12 +27,12 @@ import org.kaazing.k3po.junit.annotation.Specification;
 import org.kaazing.k3po.junit.rules.K3poRule;
 import org.reaktivity.reaktor.test.ReaktorRule;
 
-public class IdIT
+public class HandshakeIT
 {
     private final K3poRule k3po = new K3poRule()
             .addScriptRoot("route", "org/reaktivity/specification/nukleus/sse/control/route")
-            .addScriptRoot("client", "org/reaktivity/specification/sse/id")
-            .addScriptRoot("server", "org/reaktivity/specification/nukleus/sse/streams/id");
+            .addScriptRoot("client", "org/reaktivity/specification/sse/handshake")
+            .addScriptRoot("server", "org/reaktivity/specification/nukleus/sse/streams/handshake");
 
     private final TestRule timeout = new DisableOnDebug(new Timeout(10, SECONDS));
 
@@ -50,9 +50,9 @@ public class IdIT
     @Test
     @Specification({
         "${route}/server/controller",
-        "${client}/last.event.id/request",
+        "${client}/request.header.last.event.id/request",
         "${server}/last.event.id/response" })
-    public void shouldReceiveMessageAfterLastEventId() throws Exception
+    public void shouldHandshakeWithLastEventId() throws Exception
     {
         k3po.finish();
     }
