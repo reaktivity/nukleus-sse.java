@@ -51,7 +51,11 @@ import org.reaktivity.nukleus.stream.StreamFactory;
 public final class ServerStreamFactory implements StreamFactory
 {
     private static final int MAXIMUM_DATA_LENGTH = (1 << Short.SIZE) - 1;
-    private static final int MAXIMUM_HEADER_SIZE = 14;
+    private static final int MAXIMUM_HEADER_SIZE =
+            5 +         // data:
+            3 +         // id:
+            256 +       // id string
+            3;          // \n for data:, id:, data
 
     private final RouteFW routeRO = new RouteFW();
     private final SseRouteExFW sseRouteExRO = new SseRouteExFW();
