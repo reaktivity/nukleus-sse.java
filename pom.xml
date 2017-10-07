@@ -8,6 +8,7 @@
   <artifactId>nukleus-sse</artifactId>
   <version>develop-SNAPSHOT</version>
   <name>SSE Nukleus Implementation</name>
+  <description>SSE Nukleus Implementation</description>
   <url>https://github.com/reaktivity/nukleus-sse.java</url>
 
   <licenses>
