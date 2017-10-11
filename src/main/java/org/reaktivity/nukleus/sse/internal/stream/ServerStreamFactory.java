@@ -55,7 +55,7 @@ public final class ServerStreamFactory implements StreamFactory
             5 +         // data:
             3 +         // id:
             256 +       // id string
-            3;          // \n for data:, id:, data
+            3;          // \n for data:, id:, event
 
     private final RouteFW routeRO = new RouteFW();
     private final SseRouteExFW sseRouteExRO = new SseRouteExFW();
