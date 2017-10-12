@@ -508,8 +508,8 @@ public final class ServerStreamFactory implements StreamFactory
         private void setHttpResponseHeaders(
             ListFW.Builder<HttpHeaderFW.Builder, HttpHeaderFW> headers)
         {
-            headers.item(h -> h.representation((byte)0).name(":status").value("200"));
-            headers.item(h -> h.representation((byte)0).name("content-type").value("text/event-stream"));
+            headers.item(h -> h.name(":status").value("200"));
+            headers.item(h -> h.name("content-type").value("text/event-stream"));
         }
 
         private void handleThrottle(
