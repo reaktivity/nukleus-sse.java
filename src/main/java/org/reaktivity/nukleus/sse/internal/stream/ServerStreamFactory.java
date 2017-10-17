@@ -51,6 +51,11 @@ import org.reaktivity.nukleus.stream.StreamFactory;
 public final class ServerStreamFactory implements StreamFactory
 {
     private static final int MAXIMUM_DATA_LENGTH = (1 << Short.SIZE) - 1;
+    private static final int MAXIMUM_HEADER_SIZE =
+            5 +         // data:
+            3 +         // id:
+            256 +       // id string
+            3;          // \n for data:, id:, event
 
     private final RouteFW routeRO = new RouteFW();
     private final SseRouteExFW sseRouteExRO = new SseRouteExFW();
@@ -115,7 +120,7 @@ public final class ServerStreamFactory implements StreamFactory
         final BeginFW begin = beginRO.wrap(buffer, index, index + length);
         final long sourceRef = begin.sourceRef();
 
-        MessageConsumer newStream = null;
+        MessageConsumer newStream;
 
         if (sourceRef == 0L)
         {
@@ -365,12 +370,9 @@ public final class ServerStreamFactory implements StreamFactory
 
         private MessageConsumer streamState;
 
-        private int targetWindowBytes;
-        private int targetWindowFrames;
-        private int targetWindowBytesAdjustment;
-        private int targetWindowFramesAdjustment;
-
-        private Consumer<WindowFW> windowHandler;
+        private int targetWindowBudget;
+        private int targetWindowBudgetAdjustment;
+        private int targetWindowPadding;
 
         private ServerConnectReplyStream(
             MessageConsumer connectReplyThrottle,
@@ -456,7 +458,6 @@ public final class ServerStreamFactory implements StreamFactory
                 this.acceptReplyId = newAcceptReplyId;
 
                 this.streamState = this::afterBeginOrData;
-                this.windowHandler = this::processInitialWindow;
             }
             else
             {
@@ -467,10 +468,9 @@ public final class ServerStreamFactory implements StreamFactory
         private void handleData(
             DataFW data)
         {
-            targetWindowBytes -= data.length();
-            targetWindowFrames--;
+            targetWindowBudget -= data.length() + targetWindowPadding;
 
-            if (targetWindowBytes < 0 || targetWindowFrames < 0)
+            if (targetWindowBudget < 0)
             {
                 doReset(connectReplyThrottle, connectReplyId);
             }
@@ -489,11 +489,7 @@ public final class ServerStreamFactory implements StreamFactory
                 final int sseBytesConsumed = payload.sizeof();
                 final int sseBytesProduced = doHttpData(acceptReply, acceptReplyId, payload, id);
 
-                targetWindowBytesAdjustment -= sseBytesProduced - sseBytesConsumed;
-                if (payload.sizeof() + sseBytesProduced > MAXIMUM_DATA_LENGTH)
-                {
-                    targetWindowFramesAdjustment--;
-                }
+                targetWindowBudgetAdjustment += MAXIMUM_HEADER_SIZE - (sseBytesProduced - sseBytesConsumed);
             }
         }
 
@@ -526,7 +522,7 @@ public final class ServerStreamFactory implements StreamFactory
             {
             case WindowFW.TYPE_ID:
                 final WindowFW window = windowRO.wrap(buffer, index, index + length);
-                this.windowHandler.accept(window);
+                handleWindow(window);
                 break;
             case ResetFW.TYPE_ID:
                 final ResetFW reset = resetRO.wrap(buffer, index, index + length);
@@ -538,35 +534,13 @@ public final class ServerStreamFactory implements StreamFactory
             }
         }
 
-        private void processInitialWindow(WindowFW window)
+        private void handleWindow(WindowFW window)
         {
-            final int sourceWindowBytesDelta = window.update();
-
-            targetWindowBytesAdjustment -= sourceWindowBytesDelta * 20 / 100;
-
-            this.windowHandler = this::processWindow;
-            this.windowHandler.accept(window);
-        }
-
-        private void processWindow(WindowFW window)
-        {
-            final int sourceWindowBytesDelta = window.update();
-            final int sourceWindowFramesDelta = window.frames();
-
-            final int targetWindowBytesDelta = sourceWindowBytesDelta + targetWindowBytesAdjustment;
-            final int targetWindowFramesDelta = sourceWindowFramesDelta + targetWindowFramesAdjustment;
-
-            targetWindowBytes += Math.max(targetWindowBytesDelta, 0);
-            targetWindowBytesAdjustment = Math.min(targetWindowBytesDelta, 0);
-
-            targetWindowFrames += Math.max(targetWindowFramesDelta, 0);
-            targetWindowFramesAdjustment = Math.min(targetWindowFramesDelta, 0);
-
-            if (targetWindowBytesDelta > 0 || targetWindowFramesDelta > 0)
-            {
-                doWindow(connectReplyThrottle, connectReplyId,
-                        Math.max(targetWindowBytesDelta, 0), Math.max(targetWindowFramesDelta, 0));
-            }
+            final int targetWindowCredit = window.credit() + targetWindowBudgetAdjustment;
+            targetWindowPadding = window.padding() + MAXIMUM_HEADER_SIZE;
+            targetWindowBudget += targetWindowCredit;
+            targetWindowBudgetAdjustment = 0;
+            doWindow(connectReplyThrottle, connectReplyId, targetWindowCredit, targetWindowPadding);
         }
 
         private void handleReset(
@@ -716,13 +690,13 @@ public final class ServerStreamFactory implements StreamFactory
     private void doWindow(
         final MessageConsumer throttle,
         final long throttleId,
-        final int writableBytes,
-        final int writableFrames)
+        final int credit,
+        final int padding)
     {
         final WindowFW window = windowRW.wrap(writeBuffer, 0, writeBuffer.capacity())
                 .streamId(throttleId)
-                .update(writableBytes)
-                .frames(writableFrames)
+                .credit(credit)
+                .padding(padding)
                 .build();
 
         throttle.accept(window.typeId(), window.buffer(), window.offset(), window.sizeof());
