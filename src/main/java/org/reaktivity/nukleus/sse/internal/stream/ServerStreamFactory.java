@@ -362,24 +362,26 @@ public final class ServerStreamFactory implements StreamFactory
 
     private final class ServerConnectReplyStream
     {
-        private final MessageConsumer connectReplyThrottle;
-        private final long connectReplyId;
+        private final MessageConsumer applicationReplyThrottle;
+        private final long applicationReplyId;
 
-        private MessageConsumer acceptReply;
-        private long acceptReplyId;
+        private MessageConsumer networkReply;
+        private long networkReplyId;
 
         private MessageConsumer streamState;
 
-        private int targetWindowBudget;
-        private int targetWindowBudgetAdjustment;
-        private int targetWindowPadding;
+        private int networkReplyBudget;
+        private int networkReplyPadding;
+
+        private int applicationReplyBudget;
+        private int applicationReplyPadding;
 
         private ServerConnectReplyStream(
-            MessageConsumer connectReplyThrottle,
-            long connectReplyId)
+            MessageConsumer applicationReplyThrottle,
+            long applicationReplyId)
         {
-            this.connectReplyThrottle = connectReplyThrottle;
-            this.connectReplyId = connectReplyId;
+            this.applicationReplyThrottle = applicationReplyThrottle;
+            this.applicationReplyId = applicationReplyId;
             this.streamState = this::beforeBegin;
         }
 
@@ -405,7 +407,7 @@ public final class ServerStreamFactory implements StreamFactory
             }
             else
             {
-                doReset(connectReplyThrottle, connectReplyId);
+                doReset(applicationReplyThrottle, applicationReplyId);
             }
         }
 
@@ -430,7 +432,7 @@ public final class ServerStreamFactory implements StreamFactory
                 handleAbort(abort);
                 break;
             default:
-                doReset(connectReplyThrottle, connectReplyId);
+                doReset(applicationReplyThrottle, applicationReplyId);
                 break;
             }
         }
@@ -438,41 +440,41 @@ public final class ServerStreamFactory implements StreamFactory
         private void handleBegin(
             BeginFW begin)
         {
-            final long connectRef = begin.sourceRef();
+            final long applicationReplyRef = begin.sourceRef();
             final long correlationId = begin.correlationId();
 
             final ServerHandshake handshake = correlations.remove(correlationId);
 
-            if (connectRef == 0L && handshake != null)
+            if (applicationReplyRef == 0L && handshake != null)
             {
-                final String acceptReplyName = handshake.acceptName();
+                final String networkReplyName = handshake.networkName();
 
-                final MessageConsumer newAcceptReply = router.supplyTarget(acceptReplyName);
-                final long newAcceptReplyId = supplyStreamId.getAsLong();
+                final MessageConsumer newNetworkReply = router.supplyTarget(networkReplyName);
+                final long newNetworkReplyId = supplyStreamId.getAsLong();
                 final long newCorrelationId = handshake.correlationId();
 
-                doHttpBegin(newAcceptReply, newAcceptReplyId, 0L, newCorrelationId, this::setHttpResponseHeaders);
-                router.setThrottle(acceptReplyName, newAcceptReplyId, this::handleThrottle);
+                doHttpBegin(newNetworkReply, newNetworkReplyId, 0L, newCorrelationId, this::setHttpResponseHeaders);
+                router.setThrottle(networkReplyName, newNetworkReplyId, this::handleThrottle);
 
-                this.acceptReply = newAcceptReply;
-                this.acceptReplyId = newAcceptReplyId;
+                this.networkReply = newNetworkReply;
+                this.networkReplyId = newNetworkReplyId;
 
                 this.streamState = this::afterBeginOrData;
             }
             else
             {
-                doReset(connectReplyThrottle, connectReplyId);
+                doReset(applicationReplyThrottle, applicationReplyId);
             }
         }
 
         private void handleData(
             DataFW data)
         {
-            targetWindowBudget -= data.length() + targetWindowPadding;
+            applicationReplyBudget -= data.length() + applicationReplyPadding;
 
-            if (targetWindowBudget < 0)
+            if (applicationReplyBudget < 0)
             {
-                doReset(connectReplyThrottle, connectReplyId);
+                doReset(applicationReplyThrottle, applicationReplyId);
             }
             else
             {
@@ -486,23 +488,21 @@ public final class ServerStreamFactory implements StreamFactory
                     id = sseDataEx.id().asString();
                 }
 
-                final int sseBytesConsumed = payload.sizeof();
-                final int sseBytesProduced = doHttpData(acceptReply, acceptReplyId, payload, id);
-
-                targetWindowBudgetAdjustment += MAXIMUM_HEADER_SIZE - (sseBytesProduced - sseBytesConsumed);
+                final int bytesWritten = doHttpData(networkReply, networkReplyId, payload, id);
+                networkReplyBudget -= bytesWritten + networkReplyPadding;
             }
         }
 
         private void handleEnd(
             EndFW end)
         {
-            doHttpEnd(acceptReply, acceptReplyId);
+            doHttpEnd(networkReply, networkReplyId);
         }
 
         private void handleAbort(
             AbortFW abort)
         {
-            doHttpAbort(acceptReply, acceptReplyId);
+            doHttpAbort(networkReply, networkReplyId);
         }
 
         private void setHttpResponseHeaders(
@@ -534,19 +534,25 @@ public final class ServerStreamFactory implements StreamFactory
             }
         }
 
-        private void handleWindow(WindowFW window)
+        private void handleWindow(
+            WindowFW window)
         {
-            final int targetWindowCredit = window.credit() + targetWindowBudgetAdjustment;
-            targetWindowPadding = window.padding() + MAXIMUM_HEADER_SIZE;
-            targetWindowBudget += targetWindowCredit;
-            targetWindowBudgetAdjustment = 0;
-            doWindow(connectReplyThrottle, connectReplyId, targetWindowCredit, targetWindowPadding);
+            networkReplyBudget += window.credit();
+            networkReplyPadding = window.padding();
+
+            applicationReplyPadding = networkReplyPadding + MAXIMUM_HEADER_SIZE;
+            final int applicationReplyCredit = networkReplyBudget - applicationReplyBudget;
+            if (applicationReplyCredit > 0)
+            {
+                doWindow(applicationReplyThrottle, applicationReplyId, applicationReplyCredit, applicationReplyPadding);
+                applicationReplyBudget += applicationReplyCredit;
+            }
         }
 
         private void handleReset(
             ResetFW reset)
         {
-            doReset(connectReplyThrottle, connectReplyId);
+            doReset(applicationReplyThrottle, applicationReplyId);
         }
     }
 
@@ -593,7 +599,7 @@ public final class ServerStreamFactory implements StreamFactory
 
         stream.accept(data.typeId(), data.buffer(), data.offset(), data.sizeof());
 
-        return data.sizeof();
+        return data.length();
     }
 
     private void doHttpEnd(
