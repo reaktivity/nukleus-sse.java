@@ -17,20 +17,20 @@ package org.reaktivity.nukleus.sse.internal.stream;
 
 public final class ServerHandshake
 {
-    private final String acceptName;
+    private final String networkName;
     private final long correlationId;
 
     public ServerHandshake(
-        String acceptName,
+        String networkName,
         long correlationId)
     {
-        this.acceptName = acceptName;
+        this.networkName = networkName;
         this.correlationId = correlationId;
     }
 
-    public String acceptName()
+    public String networkName()
     {
-        return acceptName;
+        return networkName;
     }
 
     public long correlationId()
