@@ -544,7 +544,7 @@ public final class ServerStreamFactory implements StreamFactory
             final int applicationReplyCredit = networkReplyBudget - applicationReplyBudget;
             if (applicationReplyCredit > 0)
             {
-                doWindow(applicationReplyThrottle, applicationReplyId, applicationReplyCredit, applicationReplyPadding);
+                doWindow(applicationReplyThrottle, applicationReplyId, applicationReplyCredit, applicationReplyPadding, 0);
                 applicationReplyBudget += applicationReplyCredit;
             }
         }
@@ -594,6 +594,8 @@ public final class ServerStreamFactory implements StreamFactory
 
         DataFW data = dataRW.wrap(writeBuffer, 0, writeBuffer.capacity())
                 .streamId(targetId)
+                .groupId(0)
+                .claimed(0)
                 .payload(p -> p.set(visitSseEvent(eventData, eventId)))
                 .build();
 
@@ -697,12 +699,14 @@ public final class ServerStreamFactory implements StreamFactory
         final MessageConsumer throttle,
         final long throttleId,
         final int credit,
-        final int padding)
+        final int padding,
+        final int groupId)
     {
         final WindowFW window = windowRW.wrap(writeBuffer, 0, writeBuffer.capacity())
                 .streamId(throttleId)
                 .credit(credit)
                 .padding(padding)
+                .groupId(groupId)
                 .build();
 
         throttle.accept(window.typeId(), window.buffer(), window.offset(), window.sizeof());
