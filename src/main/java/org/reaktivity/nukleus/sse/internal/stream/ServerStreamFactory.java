@@ -595,7 +595,7 @@ public final class ServerStreamFactory implements StreamFactory
         DataFW data = dataRW.wrap(writeBuffer, 0, writeBuffer.capacity())
                 .streamId(targetId)
                 .groupId(0)
-                .claimed(0)
+                .padding(0)
                 .payload(p -> p.set(visitSseEvent(eventData, eventId)))
                 .build();
 
