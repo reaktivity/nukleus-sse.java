@@ -15,6 +15,8 @@
  */
 package org.reaktivity.nukleus.sse.internal.stream;
 
+import java.util.function.IntUnaryOperator;
+import java.util.function.LongFunction;
 import java.util.function.LongSupplier;
 import java.util.function.Supplier;
 
@@ -64,6 +66,20 @@ public final class ServerStreamFactoryBuilder implements StreamFactoryBuilder
         LongSupplier supplyStreamId)
     {
         this.supplyStreamId = supplyStreamId;
+        return this;
+    }
+
+    @Override
+    public ServerStreamFactoryBuilder setGroupBudgetClaimer(
+        LongFunction<IntUnaryOperator> groupBudgetClaimer)
+    {
+        return this;
+    }
+
+    @Override
+    public ServerStreamFactoryBuilder setGroupBudgetReleaser(
+        LongFunction<IntUnaryOperator> groupBudgetReleaser)
+    {
         return this;
     }
 
