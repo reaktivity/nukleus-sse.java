@@ -374,7 +374,6 @@ public final class ServerStreamFactory implements StreamFactory
         private int networkReplyPadding;
 
         private int applicationReplyBudget;
-        private int applicationReplyPadding;
 
         private ServerConnectReplyStream(
             MessageConsumer applicationReplyThrottle,
@@ -470,7 +469,7 @@ public final class ServerStreamFactory implements StreamFactory
         private void handleData(
             DataFW data)
         {
-            applicationReplyBudget -= data.length() + applicationReplyPadding;
+            applicationReplyBudget -= data.length() + data.padding();
 
             if (applicationReplyBudget < 0)
             {
@@ -488,7 +487,7 @@ public final class ServerStreamFactory implements StreamFactory
                     id = sseDataEx.id().asString();
                 }
 
-                final int bytesWritten = doHttpData(networkReply, networkReplyId, payload, id);
+                final int bytesWritten = doHttpData(networkReply, networkReplyId, networkReplyPadding, payload, id);
                 networkReplyBudget -= bytesWritten + networkReplyPadding;
             }
         }
@@ -540,7 +539,7 @@ public final class ServerStreamFactory implements StreamFactory
             networkReplyBudget += window.credit();
             networkReplyPadding = window.padding();
 
-            applicationReplyPadding = networkReplyPadding + MAXIMUM_HEADER_SIZE;
+            int applicationReplyPadding = networkReplyPadding + MAXIMUM_HEADER_SIZE;
             final int applicationReplyCredit = networkReplyBudget - applicationReplyBudget;
             if (applicationReplyCredit > 0)
             {
@@ -587,6 +586,7 @@ public final class ServerStreamFactory implements StreamFactory
     private int doHttpData(
         MessageConsumer stream,
         long targetId,
+        int padding,
         OctetsFW eventOctets,
         String eventId)
     {
@@ -595,7 +595,7 @@ public final class ServerStreamFactory implements StreamFactory
         DataFW data = dataRW.wrap(writeBuffer, 0, writeBuffer.capacity())
                 .streamId(targetId)
                 .groupId(0)
-                .padding(0)
+                .padding(padding)
                 .payload(p -> p.set(visitSseEvent(eventData, eventId)))
                 .build();
 
