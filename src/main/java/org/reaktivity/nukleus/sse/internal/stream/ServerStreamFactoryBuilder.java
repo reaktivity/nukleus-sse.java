@@ -15,7 +15,9 @@
  */
 package org.reaktivity.nukleus.sse.internal.stream;
 
+import java.util.function.Function;
 import java.util.function.IntUnaryOperator;
+import java.util.function.LongConsumer;
 import java.util.function.LongFunction;
 import java.util.function.LongSupplier;
 import java.util.function.Supplier;
@@ -25,6 +27,7 @@ import org.agrona.collections.Long2ObjectHashMap;
 import org.reaktivity.nukleus.Configuration;
 import org.reaktivity.nukleus.buffer.BufferPool;
 import org.reaktivity.nukleus.route.RouteManager;
+import org.reaktivity.nukleus.sse.internal.types.control.RouteFW;
 import org.reaktivity.nukleus.stream.StreamFactory;
 import org.reaktivity.nukleus.stream.StreamFactoryBuilder;
 
@@ -37,12 +40,24 @@ public final class ServerStreamFactoryBuilder implements StreamFactoryBuilder
     private MutableDirectBuffer writeBuffer;
     private LongSupplier supplyStreamId;
     private LongSupplier supplyCorrelationId;
+    private final Long2ObjectHashMap<LongSupplier> perRouteWriteFrameStats;
+    private final Long2ObjectHashMap<LongSupplier> perRouteReadFrameStats;
+    private final Long2ObjectHashMap<LongConsumer> perRouteWriteBytesStats;
+    private final Long2ObjectHashMap<LongConsumer> perRouteReadBytesStats;
+    private Function<RouteFW, LongSupplier> supplyWriteFrameCounter;
+    private Function<RouteFW, LongSupplier> supplyReadFrameCounter;
+    private Function<RouteFW, LongConsumer> supplyWriteBytesAccumulator;
+    private Function<RouteFW, LongConsumer> supplyReadBytesAccumulator;
 
     public ServerStreamFactoryBuilder(
         Configuration config)
     {
         this.config = config;
         this.correlations = new Long2ObjectHashMap<>();
+        this.perRouteWriteFrameStats = new Long2ObjectHashMap<>();
+        this.perRouteReadFrameStats = new Long2ObjectHashMap<>();
+        this.perRouteWriteBytesStats = new Long2ObjectHashMap<>();
+        this.perRouteReadBytesStats = new Long2ObjectHashMap<>();
     }
 
     @Override
@@ -99,9 +114,67 @@ public final class ServerStreamFactoryBuilder implements StreamFactoryBuilder
     }
 
     @Override
+    public StreamFactoryBuilder setCounterSupplier(
+        Function<String, LongSupplier> supplyCounter)
+    {
+        if (supplyWriteFrameCounter == null)
+        {
+            this.supplyWriteFrameCounter = r ->
+            {
+                final long routeId = r.correlationId();
+                return perRouteWriteFrameStats.computeIfAbsent(
+                        routeId,
+                        t -> supplyCounter.apply(String.format("%d.frames.wrote", t)));
+            };
+            this.supplyReadFrameCounter = r ->
+            {
+                final long routeId = r.correlationId();
+                return perRouteReadFrameStats.computeIfAbsent(
+                        routeId,
+                        t -> supplyCounter.apply(String.format("%d.frames.read", t)));
+            };
+        }
+        return this;
+    }
+
+    @Override
+    public StreamFactoryBuilder setAccumulatorSupplier(
+            Function<String, LongConsumer> supplyStatsCounter)
+    {
+        if (supplyWriteBytesAccumulator == null)
+        {
+            this.supplyWriteBytesAccumulator = r ->
+            {
+                final long routeId = r.correlationId();
+                return perRouteWriteBytesStats.computeIfAbsent(
+                        routeId,
+                        t -> supplyStatsCounter.apply(String.format("%d.bytes.wrote", t)));
+            };
+            this.supplyReadBytesAccumulator = r ->
+            {
+                final long routeId = r.correlationId();
+                return perRouteReadBytesStats.computeIfAbsent(
+                        routeId,
+                        t -> supplyStatsCounter.apply(String.format("%d.bytes.read", t)));
+            };
+        }
+        return this;
+    }
+
+
+    @Override
     public StreamFactory build()
     {
-        return new ServerStreamFactory(config, router, writeBuffer,
-                supplyStreamId, supplyCorrelationId, correlations);
+        return new ServerStreamFactory(
+                config,
+                router,
+                writeBuffer,
+                supplyStreamId,
+                supplyCorrelationId,
+                correlations,
+                supplyWriteFrameCounter,
+                supplyReadFrameCounter,
+                supplyWriteBytesAccumulator,
+                supplyReadBytesAccumulator);
     }
 }
