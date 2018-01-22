@@ -108,8 +108,8 @@ public final class ServerStreamFactory implements StreamFactory
         Long2ObjectHashMap<ServerHandshake> correlations,
         Function<RouteFW, LongSupplier> supplyWriteFrameCounter,
         Function<RouteFW, LongSupplier> supplyReadFrameCounter,
-        Function<RouteFW, LongConsumer> supplyWriteBytesCounter,
-        Function<RouteFW, LongConsumer> supplyReadBytesCounter)
+        Function<RouteFW, LongConsumer> supplyWriteBytesAccumulator,
+        Function<RouteFW, LongConsumer> supplyReadBytesAccumulator)
     {
         this.router = requireNonNull(router);
         this.writeBuffer = requireNonNull(writeBuffer);
@@ -119,8 +119,8 @@ public final class ServerStreamFactory implements StreamFactory
         this.wrapRoute = this::wrapRoute;
         this.supplyWriteFrameCounter = supplyWriteFrameCounter;
         this.supplyReadFrameCounter = supplyReadFrameCounter;
-        this.supplyWriteBytesAccumulator = supplyWriteBytesCounter;
-        this.supplyReadBytesAccumulator = supplyReadBytesCounter;
+        this.supplyWriteBytesAccumulator = supplyWriteBytesAccumulator;
+        this.supplyReadBytesAccumulator = supplyReadBytesAccumulator;
     }
 
     @Override
