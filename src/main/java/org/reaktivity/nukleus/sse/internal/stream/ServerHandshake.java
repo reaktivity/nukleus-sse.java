@@ -15,17 +15,26 @@
  */
 package org.reaktivity.nukleus.sse.internal.stream;
 
+import java.util.function.LongConsumer;
+import java.util.function.LongSupplier;
+
 public final class ServerHandshake
 {
     private final String networkName;
     private final long correlationId;
+    private final LongSupplier readFrameCounter;
+    private final LongConsumer readBytesAccumulator;
 
     public ServerHandshake(
         String networkName,
-        long correlationId)
+        long correlationId,
+        LongSupplier readFrameCounter,
+        LongConsumer readBytesAccumulator)
     {
         this.networkName = networkName;
         this.correlationId = correlationId;
+        this.readFrameCounter = readFrameCounter;
+        this.readBytesAccumulator = readBytesAccumulator;
     }
 
     public String networkName()
@@ -36,5 +45,15 @@ public final class ServerHandshake
     public long correlationId()
     {
         return correlationId;
+    }
+
+    public LongSupplier readFrameCounter()
+    {
+        return readFrameCounter;
+    }
+
+    public LongConsumer readBytesAccumulator()
+    {
+        return readBytesAccumulator;
     }
 }

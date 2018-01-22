@@ -20,6 +20,8 @@ import static java.util.Objects.requireNonNull;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.function.Consumer;
+import java.util.function.Function;
+import java.util.function.LongConsumer;
 import java.util.function.LongSupplier;
 
 import org.agrona.DirectBuffer;
@@ -93,13 +95,22 @@ public final class ServerStreamFactory implements StreamFactory
     private final Long2ObjectHashMap<ServerHandshake> correlations;
     private final MessageFunction<RouteFW> wrapRoute;
 
+    private final Function<RouteFW, LongSupplier> supplyWriteFrameCounter;
+    private final Function<RouteFW, LongSupplier> supplyReadFrameCounter;
+    private final Function<RouteFW, LongConsumer> supplyWriteBytesAccumulator;
+    private final Function<RouteFW, LongConsumer> supplyReadBytesAccumulator;
+
     public ServerStreamFactory(
         Configuration config,
         RouteManager router,
         MutableDirectBuffer writeBuffer,
         LongSupplier supplyStreamId,
         LongSupplier supplyCorrelationId,
-        Long2ObjectHashMap<ServerHandshake> correlations)
+        Long2ObjectHashMap<ServerHandshake> correlations,
+        Function<RouteFW, LongSupplier> supplyWriteFrameCounter,
+        Function<RouteFW, LongSupplier> supplyReadFrameCounter,
+        Function<RouteFW, LongConsumer> supplyWriteBytesAccumulator,
+        Function<RouteFW, LongConsumer> supplyReadBytesAccumulator)
     {
         this.router = requireNonNull(router);
         this.writeBuffer = requireNonNull(writeBuffer);
@@ -107,6 +118,10 @@ public final class ServerStreamFactory implements StreamFactory
         this.supplyCorrelationId = requireNonNull(supplyCorrelationId);
         this.correlations = requireNonNull(correlations);
         this.wrapRoute = this::wrapRoute;
+        this.supplyWriteFrameCounter = supplyWriteFrameCounter;
+        this.supplyReadFrameCounter = supplyReadFrameCounter;
+        this.supplyWriteBytesAccumulator = supplyWriteBytesAccumulator;
+        this.supplyReadBytesAccumulator = supplyReadBytesAccumulator;
     }
 
     @Override
@@ -155,8 +170,18 @@ public final class ServerStreamFactory implements StreamFactory
         if (route != null)
         {
             final long acceptId = begin.streamId();
-
-            newStream = new ServerAcceptStream(acceptThrottle, acceptId, acceptRef)::handleStream;
+            final LongSupplier writeFrameCounter = supplyWriteFrameCounter.apply(route);
+            final LongSupplier readFrameCounter = supplyReadFrameCounter.apply(route);
+            final LongConsumer writeBytesAccumulator = supplyWriteBytesAccumulator.apply(route);
+            final LongConsumer readBytesAccumulator = supplyReadBytesAccumulator.apply(route);
+            newStream = new ServerAcceptStream(
+                    acceptThrottle,
+                    acceptId,
+                    acceptRef,
+                    writeFrameCounter,
+                    readFrameCounter,
+                    writeBytesAccumulator,
+                    readBytesAccumulator)::handleStream;
         }
 
         return newStream;
@@ -184,6 +209,10 @@ public final class ServerStreamFactory implements StreamFactory
     {
         private final MessageConsumer acceptThrottle;
         private final long acceptId;
+        private final LongSupplier writeFrameCounter;
+        private final LongSupplier readFrameCounter;
+        private final LongConsumer writeBytesAccumulator;
+        private final LongConsumer readBytesAccumulator;
 
         private MessageConsumer connectTarget;
         private long connectId;
@@ -193,10 +222,18 @@ public final class ServerStreamFactory implements StreamFactory
         private ServerAcceptStream(
             MessageConsumer acceptThrottle,
             long acceptId,
-            long acceptRef)
+            long acceptRef,
+            LongSupplier writeFrameCounter,
+            LongSupplier readFrameCounter,
+            LongConsumer writeBytesAccumulator,
+            LongConsumer readBytesAccumulator)
         {
             this.acceptThrottle = acceptThrottle;
             this.acceptId = acceptId;
+            this.writeFrameCounter = writeFrameCounter;
+            this.readFrameCounter = readFrameCounter;
+            this.writeBytesAccumulator = writeBytesAccumulator;
+            this.readBytesAccumulator = readBytesAccumulator;
 
             this.streamState = this::beforeBegin;
         }
@@ -291,12 +328,19 @@ public final class ServerStreamFactory implements StreamFactory
                 final SseRouteExFW sseRouteEx = route.extension().get(sseRouteExRO::wrap);
 
                 final String connectName = route.target().asString();
-                final MessageConsumer connectTarget = router.supplyTarget(connectName);
+                final MessageConsumer connectTarget = consumeAndCount(
+                    router.supplyTarget(connectName),
+                    writeFrameCounter);
+
                 final long connectRef = route.targetRef();
                 final long newConnectId = supplyStreamId.getAsLong();
                 final long newCorrelationId = supplyCorrelationId.getAsLong();
 
-                ServerHandshake handshake = new ServerHandshake(acceptName, correlationId);
+                ServerHandshake handshake = new ServerHandshake(
+                    acceptName,
+                    correlationId,
+                    readFrameCounter,
+                    readBytesAccumulator);
 
                 correlations.put(newCorrelationId, handshake);
 
@@ -307,7 +351,6 @@ public final class ServerStreamFactory implements StreamFactory
                     lastEventIdNonNull = "";
                 }
                 // TODO: end
-
                 doSseBegin(connectTarget, newConnectId, connectRef, newCorrelationId, pathInfo, lastEventIdNonNull);
                 router.setThrottle(connectName, newConnectId, this::handleThrottle);
 
@@ -374,6 +417,7 @@ public final class ServerStreamFactory implements StreamFactory
         private int networkReplyPadding;
 
         private int applicationReplyBudget;
+        private LongConsumer readBytesAccumulator;
 
         private ServerConnectReplyStream(
             MessageConsumer applicationReplyThrottle,
@@ -448,7 +492,10 @@ public final class ServerStreamFactory implements StreamFactory
             {
                 final String networkReplyName = handshake.networkName();
 
-                final MessageConsumer newNetworkReply = router.supplyTarget(networkReplyName);
+                final MessageConsumer newNetworkReply = consumeAndCount(
+                    router.supplyTarget(networkReplyName),
+                    handshake.readFrameCounter()
+                );
                 final long newNetworkReplyId = supplyStreamId.getAsLong();
                 final long newCorrelationId = handshake.correlationId();
 
@@ -457,6 +504,7 @@ public final class ServerStreamFactory implements StreamFactory
 
                 this.networkReply = newNetworkReply;
                 this.networkReplyId = newNetworkReplyId;
+                this.readBytesAccumulator = handshake.readBytesAccumulator();
 
                 this.streamState = this::afterBeginOrData;
             }
@@ -469,6 +517,7 @@ public final class ServerStreamFactory implements StreamFactory
         private void handleData(
             DataFW data)
         {
+            this.readBytesAccumulator.accept(data.length());
             applicationReplyBudget -= data.length() + data.padding();
 
             if (applicationReplyBudget < 0)
@@ -571,6 +620,17 @@ public final class ServerStreamFactory implements StreamFactory
                 .build();
 
         stream.accept(begin.typeId(), begin.buffer(), begin.offset(), begin.sizeof());
+    }
+
+    private static MessageConsumer consumeAndCount(
+        MessageConsumer messageConsumer,
+        LongSupplier counter)
+    {
+        return (m, b, i, l) ->
+        {
+            counter.getAsLong();
+            messageConsumer.accept(m, b, i, l);
+        };
     }
 
     private Flyweight.Builder.Visitor visitHttpBeginEx(
