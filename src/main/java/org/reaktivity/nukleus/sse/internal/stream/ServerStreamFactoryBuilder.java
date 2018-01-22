@@ -36,14 +36,16 @@ public final class ServerStreamFactoryBuilder implements StreamFactoryBuilder
     private final Configuration config;
     private final Long2ObjectHashMap<ServerHandshake> correlations;
 
-    private RouteManager router;
-    private MutableDirectBuffer writeBuffer;
-    private LongSupplier supplyStreamId;
-    private LongSupplier supplyCorrelationId;
     private final Long2ObjectHashMap<LongSupplier> perRouteWriteFrameCounter;
     private final Long2ObjectHashMap<LongSupplier> perRouteReadFrameCounter;
     private final Long2ObjectHashMap<LongConsumer> perRouteWriteBytesAccumulator;
     private final Long2ObjectHashMap<LongConsumer> perRouteReadBytesAccumulator;
+
+    private RouteManager router;
+    private MutableDirectBuffer writeBuffer;
+    private LongSupplier supplyStreamId;
+    private LongSupplier supplyCorrelationId;
+
     private Function<RouteFW, LongSupplier> supplyWriteFrameCounter;
     private Function<RouteFW, LongSupplier> supplyReadFrameCounter;
     private Function<RouteFW, LongConsumer> supplyWriteBytesAccumulator;

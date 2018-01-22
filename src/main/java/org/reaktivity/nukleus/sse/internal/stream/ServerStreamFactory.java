@@ -94,6 +94,7 @@ public final class ServerStreamFactory implements StreamFactory
 
     private final Long2ObjectHashMap<ServerHandshake> correlations;
     private final MessageFunction<RouteFW> wrapRoute;
+
     private final Function<RouteFW, LongSupplier> supplyWriteFrameCounter;
     private final Function<RouteFW, LongSupplier> supplyReadFrameCounter;
     private final Function<RouteFW, LongConsumer> supplyWriteBytesAccumulator;
@@ -691,8 +692,7 @@ public final class ServerStreamFactory implements StreamFactory
         long streamRef,
         long correlationId,
         String pathInfo,
-        String lastEventId
-        )
+        String lastEventId)
     {
         final BeginFW begin = beginRW.wrap(writeBuffer, 0, writeBuffer.capacity())
                                      .streamId(streamId)
