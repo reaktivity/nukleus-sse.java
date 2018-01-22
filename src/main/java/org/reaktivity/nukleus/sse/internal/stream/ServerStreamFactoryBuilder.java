@@ -40,10 +40,10 @@ public final class ServerStreamFactoryBuilder implements StreamFactoryBuilder
     private MutableDirectBuffer writeBuffer;
     private LongSupplier supplyStreamId;
     private LongSupplier supplyCorrelationId;
-    private final Long2ObjectHashMap<LongSupplier> perRouteWriteFrameStats;
-    private final Long2ObjectHashMap<LongSupplier> perRouteReadFrameStats;
-    private final Long2ObjectHashMap<LongConsumer> perRouteWriteBytesStats;
-    private final Long2ObjectHashMap<LongConsumer> perRouteReadBytesStats;
+    private final Long2ObjectHashMap<LongSupplier> perRouteWriteFrameCounter;
+    private final Long2ObjectHashMap<LongSupplier> perRouteReadFrameCounter;
+    private final Long2ObjectHashMap<LongConsumer> perRouteWriteBytesAccumulator;
+    private final Long2ObjectHashMap<LongConsumer> perRouteReadBytesAccumulator;
     private Function<RouteFW, LongSupplier> supplyWriteFrameCounter;
     private Function<RouteFW, LongSupplier> supplyReadFrameCounter;
     private Function<RouteFW, LongConsumer> supplyWriteBytesAccumulator;
@@ -54,10 +54,10 @@ public final class ServerStreamFactoryBuilder implements StreamFactoryBuilder
     {
         this.config = config;
         this.correlations = new Long2ObjectHashMap<>();
-        this.perRouteWriteFrameStats = new Long2ObjectHashMap<>();
-        this.perRouteReadFrameStats = new Long2ObjectHashMap<>();
-        this.perRouteWriteBytesStats = new Long2ObjectHashMap<>();
-        this.perRouteReadBytesStats = new Long2ObjectHashMap<>();
+        this.perRouteWriteFrameCounter = new Long2ObjectHashMap<>();
+        this.perRouteReadFrameCounter = new Long2ObjectHashMap<>();
+        this.perRouteWriteBytesAccumulator = new Long2ObjectHashMap<>();
+        this.perRouteReadBytesAccumulator = new Long2ObjectHashMap<>();
     }
 
     @Override
@@ -122,14 +122,14 @@ public final class ServerStreamFactoryBuilder implements StreamFactoryBuilder
             this.supplyWriteFrameCounter = r ->
             {
                 final long routeId = r.correlationId();
-                return perRouteWriteFrameStats.computeIfAbsent(
+                return perRouteWriteFrameCounter.computeIfAbsent(
                         routeId,
                         t -> supplyCounter.apply(String.format("%d.frames.wrote", t)));
             };
             this.supplyReadFrameCounter = r ->
             {
                 final long routeId = r.correlationId();
-                return perRouteReadFrameStats.computeIfAbsent(
+                return perRouteReadFrameCounter.computeIfAbsent(
                         routeId,
                         t -> supplyCounter.apply(String.format("%d.frames.read", t)));
             };
@@ -139,23 +139,23 @@ public final class ServerStreamFactoryBuilder implements StreamFactoryBuilder
 
     @Override
     public StreamFactoryBuilder setAccumulatorSupplier(
-            Function<String, LongConsumer> supplyStatsCounter)
+            Function<String, LongConsumer> supplyAccumulator)
     {
         if (supplyWriteBytesAccumulator == null)
         {
             this.supplyWriteBytesAccumulator = r ->
             {
                 final long routeId = r.correlationId();
-                return perRouteWriteBytesStats.computeIfAbsent(
+                return perRouteWriteBytesAccumulator.computeIfAbsent(
                         routeId,
-                        t -> supplyStatsCounter.apply(String.format("%d.bytes.wrote", t)));
+                        t -> supplyAccumulator.apply(String.format("%d.bytes.wrote", t)));
             };
             this.supplyReadBytesAccumulator = r ->
             {
                 final long routeId = r.correlationId();
-                return perRouteReadBytesStats.computeIfAbsent(
+                return perRouteReadBytesAccumulator.computeIfAbsent(
                         routeId,
-                        t -> supplyStatsCounter.apply(String.format("%d.bytes.read", t)));
+                        t -> supplyAccumulator.apply(String.format("%d.bytes.read", t)));
             };
         }
         return this;
