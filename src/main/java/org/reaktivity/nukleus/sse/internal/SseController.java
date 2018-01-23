@@ -189,4 +189,10 @@ public final class SseController implements Controller
                      .build()
                      .sizeof();
     }
+
+    public long count(String name)
+    {
+        return controllerSpi.doCount(name);
+    }
+
 }
