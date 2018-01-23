@@ -610,17 +610,6 @@ public final class ServerStreamFactory implements StreamFactory
         stream.accept(begin.typeId(), begin.buffer(), begin.offset(), begin.sizeof());
     }
 
-    private static MessageConsumer consumeAndCount(
-        MessageConsumer messageConsumer,
-        LongSupplier counter)
-    {
-        return (m, b, i, l) ->
-        {
-            counter.getAsLong();
-            messageConsumer.accept(m, b, i, l);
-        };
-    }
-
     private Flyweight.Builder.Visitor visitHttpBeginEx(
         Consumer<ListFW.Builder<HttpHeaderFW.Builder, HttpHeaderFW>> headers)
     {
