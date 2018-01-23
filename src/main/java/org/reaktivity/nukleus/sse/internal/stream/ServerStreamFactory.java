@@ -23,6 +23,8 @@ import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.LongConsumer;
 import java.util.function.LongSupplier;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.agrona.DirectBuffer;
 import org.agrona.MutableDirectBuffer;
@@ -52,6 +54,9 @@ import org.reaktivity.nukleus.stream.StreamFactory;
 
 public final class ServerStreamFactory implements StreamFactory
 {
+    private static final Pattern QUERY_PARAMS_PATTERN = Pattern.compile("(?<path>[^?]*)(?<query>[\\?].*)");
+    private static final Pattern LAST_EVENT_ID_PATTERN = Pattern.compile("(\\?|&)lastEventId=(?<lastEventId>[^&]*)(&|$)");
+
     private static final int MAXIMUM_DATA_LENGTH = (1 << Short.SIZE) - 1;
     private static final int MAXIMUM_HEADER_SIZE =
             5 +         // data:
@@ -294,8 +299,36 @@ public final class ServerStreamFactory implements StreamFactory
                 headers.merge(name, value, (v1, v2) -> String.format("%s, %s", v1, v2));
             });
 
-            final String pathInfo = headers.get(":path"); // TODO: ":pathinfo" ?
-            final String lastEventId = headers.get("last-event-id");
+            String pathInfo = headers.get(":path"); // TODO: ":pathinfo" ?
+            String lastEventId = headers.get("last-event-id");
+
+            // extract lastEventId query parameter from pathInfo
+            // use query parameter value as default for missing Last-Event-ID header
+            if (pathInfo != null)
+            {
+                Matcher matcher = QUERY_PARAMS_PATTERN.matcher(pathInfo);
+                if (matcher.matches())
+                {
+                    String path = matcher.group("path");
+                    String query = matcher.group("query");
+
+                    matcher = LAST_EVENT_ID_PATTERN.matcher(query);
+                    StringBuffer builder = new StringBuffer(path);
+                    while (matcher.find())
+                    {
+                        if (lastEventId == null)
+                        {
+                            lastEventId = matcher.group("lastEventId");
+                        }
+
+                        String replacement = matcher.group(3).isEmpty() ? "$3" : "$1";
+                        matcher.appendReplacement(builder, replacement);
+                    }
+                    matcher.appendTail(builder);
+                    pathInfo = builder.toString();
+                }
+            }
+
             // TODO: need lightweight approach (end)
 
             final MessagePredicate filter = (t, b, o, l) ->
