@@ -22,12 +22,14 @@ import java.util.function.LongFunction;
 import java.util.function.LongSupplier;
 import java.util.function.Supplier;
 
+import org.agrona.DirectBuffer;
 import org.agrona.MutableDirectBuffer;
 import org.agrona.collections.Long2ObjectHashMap;
 import org.reaktivity.nukleus.Configuration;
 import org.reaktivity.nukleus.buffer.BufferPool;
 import org.reaktivity.nukleus.route.RouteManager;
 import org.reaktivity.nukleus.sse.internal.types.control.RouteFW;
+import org.reaktivity.nukleus.sse.internal.types.control.UnrouteFW;
 import org.reaktivity.nukleus.stream.StreamFactory;
 import org.reaktivity.nukleus.stream.StreamFactoryBuilder;
 
@@ -35,6 +37,8 @@ public final class ServerStreamFactoryBuilder implements StreamFactoryBuilder
 {
     private final Configuration config;
     private final Long2ObjectHashMap<ServerHandshake> correlations;
+
+    private final UnrouteFW unrouteRO = new UnrouteFW();
 
     private final Long2ObjectHashMap<LongSupplier> perRouteWriteFrameCounter;
     private final Long2ObjectHashMap<LongSupplier> perRouteReadFrameCounter;
@@ -163,6 +167,23 @@ public final class ServerStreamFactoryBuilder implements StreamFactoryBuilder
         return this;
     }
 
+    public boolean handleRoute(int msgTypeId, DirectBuffer buffer, int index, int length)
+    {
+        switch(msgTypeId)
+        {
+            case UnrouteFW.TYPE_ID:
+            {
+                final UnrouteFW unroute = unrouteRO.wrap(buffer, index, index + length);
+                final long routeId = unroute.correlationId();
+                perRouteWriteBytesAccumulator.remove(routeId);
+                perRouteReadBytesAccumulator.remove(routeId);
+                perRouteWriteFrameCounter.remove(routeId);
+                perRouteReadFrameCounter.remove(routeId);
+            }
+            break;
+        }
+        return true;
+    }
 
     @Override
     public StreamFactory build()
