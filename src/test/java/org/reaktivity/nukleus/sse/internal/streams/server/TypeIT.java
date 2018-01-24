@@ -27,12 +27,12 @@ import org.kaazing.k3po.junit.annotation.Specification;
 import org.kaazing.k3po.junit.rules.K3poRule;
 import org.reaktivity.reaktor.test.ReaktorRule;
 
-public class DataIT
+public class TypeIT
 {
     private final K3poRule k3po = new K3poRule()
             .addScriptRoot("route", "org/reaktivity/specification/nukleus/sse/control/route")
-            .addScriptRoot("client", "org/reaktivity/specification/sse/data")
-            .addScriptRoot("server", "org/reaktivity/specification/nukleus/sse/streams/data");
+            .addScriptRoot("client", "org/reaktivity/specification/sse/type")
+            .addScriptRoot("server", "org/reaktivity/specification/nukleus/sse/streams/type");
 
     private final TestRule timeout = new DisableOnDebug(new Timeout(10, SECONDS));
 
@@ -52,7 +52,7 @@ public class DataIT
         "${route}/server/controller",
         "${client}/empty/request",
         "${server}/empty/response" })
-    public void shouldReceiveEmptyMessage() throws Exception
+    public void shouldReceiveEmptyType() throws Exception
     {
         k3po.finish();
     }
@@ -62,7 +62,7 @@ public class DataIT
         "${route}/server/controller",
         "${client}/non.empty/request",
         "${server}/non.empty/response" })
-    public void shouldReceiveNonEmptyMessage() throws Exception
+    public void shouldReceiveNonEmptyType() throws Exception
     {
         k3po.finish();
     }
