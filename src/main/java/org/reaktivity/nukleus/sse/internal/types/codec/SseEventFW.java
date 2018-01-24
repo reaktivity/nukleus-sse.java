@@ -25,6 +25,7 @@ public final class SseEventFW extends Flyweight
 {
     private static final byte[] DATA_FIELD_HEADER = "data:".getBytes(UTF_8);
     private static final byte[] ID_FIELD_HEADER = "id:".getBytes(UTF_8);
+    private static final byte[] TYPE_FIELD_HEADER = "event:".getBytes(UTF_8);
 
     private static final byte FIELD_TRAILER = 0x0a;
     private static final int FIELD_TRAILER_LENGTH = 1;
@@ -128,6 +129,37 @@ public final class SseEventFW extends Flyweight
 
                 buffer().putBytes(limit(), idBytes);
                 limit(limit() + idBytes.length);
+
+                buffer().putByte(limit(), FIELD_TRAILER);
+                limit(limit() + FIELD_TRAILER_LENGTH);
+
+                buffer().putByte(limit(), EVENT_TRAILER);
+                limit(limit() + EVENT_TRAILER_LENGTH);
+            }
+
+            return this;
+        }
+
+        public Builder type(
+            String type)
+        {
+            if (type != null)
+            {
+                final byte[] typeBytes = type.getBytes(UTF_8);
+
+                checkLimit(limit() +
+                           TYPE_FIELD_HEADER.length +
+                           typeBytes.length +
+                           FIELD_TRAILER_LENGTH,
+                           maxLimit());
+
+                limit(limit() - EVENT_TRAILER_LENGTH);
+
+                buffer().putBytes(limit(), TYPE_FIELD_HEADER);
+                limit(limit() + TYPE_FIELD_HEADER.length);
+
+                buffer().putBytes(limit(), typeBytes);
+                limit(limit() + typeBytes.length);
 
                 buffer().putByte(limit(), FIELD_TRAILER);
                 limit(limit() + FIELD_TRAILER_LENGTH);
