@@ -57,11 +57,12 @@ public final class ServerStreamFactory implements StreamFactory
     private static final Pattern QUERY_PARAMS_PATTERN = Pattern.compile("(?<path>[^?]*)(?<query>[\\?].*)");
     private static final Pattern LAST_EVENT_ID_PATTERN = Pattern.compile("(\\?|&)lastEventId=(?<lastEventId>[^&]*)(&|$)");
 
-    private static final int MAXIMUM_DATA_LENGTH = (1 << Short.SIZE) - 1;
     private static final int MAXIMUM_HEADER_SIZE =
             5 +         // data:
             3 +         // id:
-            256 +       // id string
+            255 +       // id string
+            6 +         // event:
+            16 +        // event string
             3;          // \n for data:, id:, event
 
     private final RouteFW routeRO = new RouteFW();
@@ -365,14 +366,7 @@ public final class ServerStreamFactory implements StreamFactory
 
                 correlations.put(newCorrelationId, handshake);
 
-                // TODO: begin - support optional lastEventId string in sse.idl
-                String lastEventIdNonNull = lastEventId;
-                if (lastEventIdNonNull == null)
-                {
-                    lastEventIdNonNull = "";
-                }
-                // TODO: end
-                doSseBegin(connectTarget, newConnectId, connectRef, newCorrelationId, pathInfo, lastEventIdNonNull);
+                doSseBegin(connectTarget, newConnectId, connectRef, newCorrelationId, pathInfo, lastEventId);
                 router.setThrottle(connectName, newConnectId, this::handleThrottle);
 
                 this.connectTarget = connectTarget;
@@ -551,13 +545,15 @@ public final class ServerStreamFactory implements StreamFactory
                 final OctetsFW extension = data.extension();
 
                 String id = null;
+                String type = null;
                 if (extension.sizeof() > 0)
                 {
                     final SseDataExFW sseDataEx = extension.get(sseDataExRO::wrap);
                     id = sseDataEx.id().asString();
+                    type = sseDataEx.type().asString();
                 }
 
-                final int bytesWritten = doHttpData(networkReply, networkReplyId, networkReplyPadding, payload, id);
+                final int bytesWritten = doHttpData(networkReply, networkReplyId, networkReplyPadding, payload, id, type);
                 networkReplyBudget -= bytesWritten + networkReplyPadding;
             }
         }
@@ -658,7 +654,8 @@ public final class ServerStreamFactory implements StreamFactory
         long targetId,
         int padding,
         OctetsFW eventOctets,
-        String eventId)
+        String eventId,
+        String eventType)
     {
         String eventData = eventOctets.buffer().getStringWithoutLengthUtf8(eventOctets.offset(), eventOctets.sizeof());
 
@@ -666,7 +663,7 @@ public final class ServerStreamFactory implements StreamFactory
                 .streamId(targetId)
                 .groupId(0)
                 .padding(padding)
-                .payload(p -> p.set(visitSseEvent(eventData, eventId)))
+                .payload(p -> p.set(visitSseEvent(eventData, eventId, eventType)))
                 .build();
 
         stream.accept(data.typeId(), data.buffer(), data.offset(), data.sizeof());
@@ -752,7 +749,8 @@ public final class ServerStreamFactory implements StreamFactory
 
     private Flyweight.Builder.Visitor visitSseEvent(
         String data,
-        String id)
+        String id,
+        String type)
     {
         // TODO: verify valid UTF-8 and no LF chars in payload
         //       would require multiple "data:" lines in event
@@ -761,6 +759,7 @@ public final class ServerStreamFactory implements StreamFactory
             sseEventRW.wrap(buffer, offset, limit)
                       .data(data)
                       .id(id)
+                      .type(type)
                       .build()
                       .sizeof();
     }
