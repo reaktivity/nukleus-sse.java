@@ -15,6 +15,7 @@
  */
 package org.reaktivity.nukleus.sse.internal;
 
+import static java.lang.String.format;
 import static java.nio.ByteBuffer.allocateDirect;
 import static java.nio.ByteOrder.nativeOrder;
 
@@ -190,9 +191,24 @@ public final class SseController implements Controller
                      .sizeof();
     }
 
-    public long count(String name)
+    public long bytesRead(long routeId)
     {
-        return controllerSpi.doCount(name);
+        return controllerSpi.doCount(format("%d.bytes.read", routeId));
+    }
+
+    public long bytesWritten(long routeId)
+    {
+        return controllerSpi.doCount(format("%d.bytes.written", routeId));
+    }
+
+    public long framesRead(long routeId)
+    {
+        return controllerSpi.doCount(format("%d.frames.read", routeId));
+    }
+
+    public long framesWritten(long routeId)
+    {
+        return controllerSpi.doCount(format("%d.bytes.written", routeId));
     }
 
 }

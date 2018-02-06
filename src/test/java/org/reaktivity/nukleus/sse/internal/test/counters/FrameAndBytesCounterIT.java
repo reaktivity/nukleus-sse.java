@@ -64,8 +64,8 @@ public class FrameAndBytesCounterIT
         k3po.finish();
         final long routeId = 0;
         Assert.assertEquals(12, counters.bytesRead(routeId));
-        Assert.assertEquals(0, counters.bytesWrote(routeId));
+        Assert.assertEquals(0, counters.bytesWritten(routeId));
         Assert.assertEquals(1, counters.framesRead(routeId));
-        Assert.assertEquals(0, counters.framesWrote(routeId));
+        Assert.assertEquals(0, counters.framesWritten(routeId));
     }
 }
