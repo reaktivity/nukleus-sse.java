@@ -657,7 +657,9 @@ public final class ServerStreamFactory implements StreamFactory
         String eventId,
         String eventType)
     {
-        String eventData = eventOctets.buffer().getStringWithoutLengthUtf8(eventOctets.offset(), eventOctets.sizeof());
+        String eventData = eventOctets != null
+                ? eventOctets.buffer().getStringWithoutLengthUtf8(eventOctets.offset(), eventOctets.sizeof())
+                : null;
 
         DataFW data = dataRW.wrap(writeBuffer, 0, writeBuffer.capacity())
                 .streamId(targetId)
