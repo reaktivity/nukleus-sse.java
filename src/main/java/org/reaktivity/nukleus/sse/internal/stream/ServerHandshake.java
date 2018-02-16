@@ -22,8 +22,8 @@ public final class ServerHandshake
 {
     private final String networkName;
     private final long correlationId;
-    private final LongSupplier readFrameCounter;
-    private final LongConsumer readBytesAccumulator;
+    private final LongSupplier countReadFrames;
+    private final LongConsumer countReadBytes;
 
     public ServerHandshake(
         String networkName,
@@ -33,8 +33,8 @@ public final class ServerHandshake
     {
         this.networkName = networkName;
         this.correlationId = correlationId;
-        this.readFrameCounter = readFrameCounter;
-        this.readBytesAccumulator = readBytesAccumulator;
+        this.countReadFrames = readFrameCounter;
+        this.countReadBytes = readBytesAccumulator;
     }
 
     public String networkName()
@@ -47,13 +47,13 @@ public final class ServerHandshake
         return correlationId;
     }
 
-    public LongSupplier readFrameCounter()
+    public LongSupplier countReadFrames()
     {
-        return readFrameCounter;
+        return countReadFrames;
     }
 
-    public LongConsumer readBytesAccumulator()
+    public LongConsumer countReadBytes()
     {
-        return readBytesAccumulator;
+        return countReadBytes;
     }
 }

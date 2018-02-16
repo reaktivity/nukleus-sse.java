@@ -15,7 +15,9 @@
  */
 package org.reaktivity.nukleus.sse.internal.stream;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Objects.requireNonNull;
+import static org.reaktivity.nukleus.sse.internal.types.stream.Flag.RST;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -29,7 +31,10 @@ import java.util.regex.Pattern;
 import org.agrona.DirectBuffer;
 import org.agrona.MutableDirectBuffer;
 import org.agrona.collections.Long2ObjectHashMap;
+import org.agrona.collections.MutableInteger;
+import org.agrona.concurrent.UnsafeBuffer;
 import org.reaktivity.nukleus.Configuration;
+import org.reaktivity.nukleus.buffer.MemoryManager;
 import org.reaktivity.nukleus.function.MessageConsumer;
 import org.reaktivity.nukleus.function.MessageFunction;
 import org.reaktivity.nukleus.function.MessagePredicate;
@@ -37,63 +42,53 @@ import org.reaktivity.nukleus.route.RouteManager;
 import org.reaktivity.nukleus.sse.internal.types.Flyweight;
 import org.reaktivity.nukleus.sse.internal.types.HttpHeaderFW;
 import org.reaktivity.nukleus.sse.internal.types.ListFW;
+import org.reaktivity.nukleus.sse.internal.types.ListFW.Builder;
 import org.reaktivity.nukleus.sse.internal.types.OctetsFW;
-import org.reaktivity.nukleus.sse.internal.types.codec.SseEventFW;
 import org.reaktivity.nukleus.sse.internal.types.control.RouteFW;
 import org.reaktivity.nukleus.sse.internal.types.control.SseRouteExFW;
-import org.reaktivity.nukleus.sse.internal.types.stream.AbortFW;
+import org.reaktivity.nukleus.sse.internal.types.stream.AckFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.BeginFW;
-import org.reaktivity.nukleus.sse.internal.types.stream.DataFW;
-import org.reaktivity.nukleus.sse.internal.types.stream.EndFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.HttpBeginExFW;
-import org.reaktivity.nukleus.sse.internal.types.stream.ResetFW;
+import org.reaktivity.nukleus.sse.internal.types.stream.RegionFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.SseBeginExFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.SseDataExFW;
-import org.reaktivity.nukleus.sse.internal.types.stream.WindowFW;
+import org.reaktivity.nukleus.sse.internal.types.stream.TransferFW;
 import org.reaktivity.nukleus.stream.StreamFactory;
 
 public final class ServerStreamFactory implements StreamFactory
 {
+    private static final byte[] DATA_BYTES = "data:".getBytes(UTF_8);
+    private static final byte[] LF_ID_BYTES = "\nid:".getBytes(UTF_8);
+    private static final byte[] LF_TYPE_BYTES = "\nevent:".getBytes(UTF_8);
+    private static final byte[] LF_LF_BYTES = "\n\n".getBytes(UTF_8);
+
     private static final Pattern QUERY_PARAMS_PATTERN = Pattern.compile("(?<path>[^?]*)(?<query>[\\?].*)");
     private static final Pattern LAST_EVENT_ID_PATTERN = Pattern.compile("(\\?|&)lastEventId=(?<lastEventId>[^&]*)(&|$)");
-
-    private static final int MAXIMUM_HEADER_SIZE =
-            5 +         // data:
-            3 +         // id:
-            255 +       // id string
-            6 +         // event:
-            16 +        // event string
-            3;          // \n for data:, id:, event
 
     private final RouteFW routeRO = new RouteFW();
     private final SseRouteExFW sseRouteExRO = new SseRouteExFW();
 
     private final BeginFW beginRO = new BeginFW();
-    private final DataFW dataRO = new DataFW();
-    private final EndFW endRO = new EndFW();
-    private final AbortFW abortRO = new AbortFW();
+    private final TransferFW transferRO = new TransferFW();
 
     private final BeginFW.Builder beginRW = new BeginFW.Builder();
-    private final DataFW.Builder dataRW = new DataFW.Builder();
-    private final EndFW.Builder endRW = new EndFW.Builder();
-    private final AbortFW.Builder abortRW = new AbortFW.Builder();
+    private final TransferFW.Builder transferRW = new TransferFW.Builder();
 
-    private final WindowFW windowRO = new WindowFW();
-    private final ResetFW resetRO = new ResetFW();
+    private final AckFW ackRO = new AckFW();
 
     private final SseBeginExFW.Builder sseBeginExRW = new SseBeginExFW.Builder();
 
-    private final WindowFW.Builder windowRW = new WindowFW.Builder();
-    private final ResetFW.Builder resetRW = new ResetFW.Builder();
+    private final AckFW.Builder ackRW = new AckFW.Builder();
 
     private final HttpBeginExFW httpBeginExRO = new HttpBeginExFW();
     private final HttpBeginExFW.Builder httpBeginExRW = new HttpBeginExFW.Builder();
 
     private final SseDataExFW sseDataExRO = new SseDataExFW();
 
-    private final SseEventFW.Builder sseEventRW = new SseEventFW.Builder();
+    private final MutableDirectBuffer sseEventRW = new UnsafeBuffer(new byte[0]);
 
     private final RouteManager router;
+    private final MemoryManager memory;
     private final MutableDirectBuffer writeBuffer;
     private final LongSupplier supplyStreamId;
     private final LongSupplier supplyCorrelationId;
@@ -109,6 +104,7 @@ public final class ServerStreamFactory implements StreamFactory
     public ServerStreamFactory(
         Configuration config,
         RouteManager router,
+        MemoryManager memory,
         MutableDirectBuffer writeBuffer,
         LongSupplier supplyStreamId,
         LongSupplier supplyCorrelationId,
@@ -119,6 +115,7 @@ public final class ServerStreamFactory implements StreamFactory
         Function<RouteFW, LongConsumer> supplyReadBytesAccumulator)
     {
         this.router = requireNonNull(router);
+        this.memory = requireNonNull(memory);
         this.writeBuffer = requireNonNull(writeBuffer);
         this.supplyStreamId = requireNonNull(supplyStreamId);
         this.supplyCorrelationId = requireNonNull(supplyCorrelationId);
@@ -176,14 +173,14 @@ public final class ServerStreamFactory implements StreamFactory
         if (route != null)
         {
             final long acceptId = begin.streamId();
-            final LongSupplier readFrameCounter = supplyReadFrameCounter.apply(route);
-            final LongConsumer readBytesAccumulator = supplyReadBytesAccumulator.apply(route);
+            final LongSupplier countReadFrames = supplyReadFrameCounter.apply(route);
+            final LongConsumer countReadBytes = supplyReadBytesAccumulator.apply(route);
             newStream = new ServerAcceptStream(
                     acceptThrottle,
                     acceptId,
                     acceptRef,
-                    readFrameCounter,
-                    readBytesAccumulator)::handleStream;
+                    countReadFrames,
+                    countReadBytes)::handleStream;
         }
 
         return newStream;
@@ -211,8 +208,8 @@ public final class ServerStreamFactory implements StreamFactory
     {
         private final MessageConsumer acceptThrottle;
         private final long acceptId;
-        private final LongSupplier readFrameCounter;
-        private final LongConsumer readBytesAccumulator;
+        private final LongSupplier countReadFrames;
+        private final LongConsumer countReadBytes;
 
         private MessageConsumer connectTarget;
         private long connectId;
@@ -223,13 +220,13 @@ public final class ServerStreamFactory implements StreamFactory
             MessageConsumer acceptThrottle,
             long acceptId,
             long acceptRef,
-            LongSupplier readFrameCounter,
-            LongConsumer readBytesAccumulator)
+            LongSupplier countReadFrames,
+            LongConsumer countReadBytes)
         {
             this.acceptThrottle = acceptThrottle;
             this.acceptId = acceptId;
-            this.readFrameCounter = readFrameCounter;
-            this.readBytesAccumulator = readBytesAccumulator;
+            this.countReadFrames = countReadFrames;
+            this.countReadBytes = countReadBytes;
 
             this.streamState = this::beforeBegin;
         }
@@ -256,7 +253,7 @@ public final class ServerStreamFactory implements StreamFactory
             }
             else
             {
-                doReset(acceptThrottle, acceptId);
+                doAck(acceptThrottle, acceptId, RST.flag());
             }
         }
 
@@ -268,16 +265,12 @@ public final class ServerStreamFactory implements StreamFactory
         {
             switch (msgTypeId)
             {
-            case EndFW.TYPE_ID:
-                final EndFW end = endRO.wrap(buffer, index, index + length);
-                handleEnd(end);
-                break;
-            case AbortFW.TYPE_ID:
-                final AbortFW abort = abortRO.wrap(buffer, index, index + length);
-                handleAbort(abort);
+            case TransferFW.TYPE_ID:
+                final TransferFW transfer = transferRO.wrap(buffer, index, index + length);
+                onTransfer(transfer);
                 break;
             default:
-                doReset(acceptThrottle, acceptId);
+                doAck(acceptThrottle, acceptId, RST.flag());
                 break;
             }
         }
@@ -361,8 +354,8 @@ public final class ServerStreamFactory implements StreamFactory
                 ServerHandshake handshake = new ServerHandshake(
                     acceptName,
                     correlationId,
-                    readFrameCounter,
-                    readBytesAccumulator);
+                    countReadFrames,
+                    countReadBytes);
 
                 correlations.put(newCorrelationId, handshake);
 
@@ -374,23 +367,17 @@ public final class ServerStreamFactory implements StreamFactory
             }
             else
             {
-                doReset(acceptThrottle, acceptId); // 4xx
+                doAck(acceptThrottle, acceptId, RST.flag()); // 4xx
             }
 
             this.streamState = this::afterBegin;
         }
 
-        private void handleEnd(
-            EndFW end)
+        private void onTransfer(
+            TransferFW transfer)
         {
-            doSseEnd(connectTarget, connectId);
-        }
-
-        private void handleAbort(
-            AbortFW abort)
-        {
-            // TODO: SseAbortEx
-            doSseAbort(connectTarget, connectId);
+            final int flags = transfer.flags();
+            doSseTransfer(connectTarget, connectId, flags);
         }
 
         private void handleThrottle(
@@ -401,9 +388,9 @@ public final class ServerStreamFactory implements StreamFactory
         {
             switch (msgTypeId)
             {
-            case ResetFW.TYPE_ID:
-                final ResetFW reset = resetRO.wrap(buffer, index, index + length);
-                handleReset(reset);
+            case AckFW.TYPE_ID:
+                final AckFW ack = ackRO.wrap(buffer, index, index + length);
+                onAck(ack);
                 break;
             default:
                 // ignore
@@ -411,10 +398,14 @@ public final class ServerStreamFactory implements StreamFactory
             }
         }
 
-        private void handleReset(
-            ResetFW reset)
+        private void onAck(
+            AckFW ack)
         {
-            doReset(acceptThrottle, acceptId);
+            final int flags = ack.flags();
+
+            assert ack.regions().isEmpty();
+
+            doAck(acceptThrottle, acceptId, flags);
         }
     }
 
@@ -428,12 +419,8 @@ public final class ServerStreamFactory implements StreamFactory
 
         private MessageConsumer streamState;
 
-        private int networkReplyBudget;
-        private int networkReplyPadding;
-
-        private int applicationReplyBudget;
-        private LongConsumer readBytesAccumulator;
-        private LongSupplier readFrameCounter;
+        private LongConsumer countReadBytes;
+        private LongSupplier countReadFrames;
 
         private ServerConnectReplyStream(
             MessageConsumer applicationReplyThrottle,
@@ -462,11 +449,11 @@ public final class ServerStreamFactory implements StreamFactory
             if (msgTypeId == BeginFW.TYPE_ID)
             {
                 final BeginFW begin = beginRO.wrap(buffer, index, index + length);
-                handleBegin(begin);
+                onBegin(begin);
             }
             else
             {
-                doReset(applicationReplyThrottle, applicationReplyId);
+                doAck(applicationReplyThrottle, applicationReplyId, RST.flag());
             }
         }
 
@@ -478,25 +465,17 @@ public final class ServerStreamFactory implements StreamFactory
         {
             switch (msgTypeId)
             {
-            case DataFW.TYPE_ID:
-                final DataFW data = dataRO.wrap(buffer, index, index + length);
-                handleData(data);
-                break;
-            case EndFW.TYPE_ID:
-                final EndFW end = endRO.wrap(buffer, index, index + length);
-                handleEnd(end);
-                break;
-            case AbortFW.TYPE_ID:
-                final AbortFW abort = abortRO.wrap(buffer, index, index + length);
-                handleAbort(abort);
+            case TransferFW.TYPE_ID:
+                final TransferFW transfer = transferRO.wrap(buffer, index, index + length);
+                onTransfer(transfer);
                 break;
             default:
-                doReset(applicationReplyThrottle, applicationReplyId);
+                doAck(applicationReplyThrottle, applicationReplyId, RST.flag());
                 break;
             }
         }
 
-        private void handleBegin(
+        private void onBegin(
             BeginFW begin)
         {
             final long applicationReplyRef = begin.sourceRef();
@@ -517,57 +496,106 @@ public final class ServerStreamFactory implements StreamFactory
 
                 this.networkReply = newNetworkReply;
                 this.networkReplyId = newNetworkReplyId;
-                this.readBytesAccumulator = handshake.readBytesAccumulator();
-                this.readFrameCounter = handshake.readFrameCounter();
+                this.countReadFrames = handshake.countReadFrames();
+                this.countReadBytes = handshake.countReadBytes();
 
                 this.streamState = this::afterBeginOrData;
             }
             else
             {
-                doReset(applicationReplyThrottle, applicationReplyId);
+                doAck(applicationReplyThrottle, applicationReplyId, RST.flag());
             }
         }
 
-        private void handleData(
-            DataFW data)
+        private void onTransfer(
+            TransferFW transfer)
         {
-            this.readFrameCounter.getAsLong();
-            this.readBytesAccumulator.accept(data.length());
-            applicationReplyBudget -= data.length() + data.padding();
+            final int flags = transfer.flags();
+            final ListFW<RegionFW> regions = transfer.regions();
+            final OctetsFW extension = transfer.extension();
 
-            if (applicationReplyBudget < 0)
+            countReadFrames.getAsLong();
+
+            if (regions.isEmpty() && extension.sizeof() == 0)
             {
-                doReset(applicationReplyThrottle, applicationReplyId);
+                doHttpTransfer(networkReply, networkReplyId, flags);
             }
             else
             {
-                final OctetsFW payload = data.payload();
-                final OctetsFW extension = data.extension();
-
-                String id = null;
-                String type = null;
-                if (extension.sizeof() > 0)
-                {
-                    final SseDataExFW sseDataEx = extension.get(sseDataExRO::wrap);
-                    id = sseDataEx.id().asString();
-                    type = sseDataEx.type().asString();
-                }
-
-                final int bytesWritten = doHttpData(networkReply, networkReplyId, networkReplyPadding, payload, id, type);
-                networkReplyBudget -= bytesWritten + networkReplyPadding;
+                regions.forEach(r -> countReadBytes.accept(r.length()));
+                doHttpTransfer(networkReply, networkReplyId, flags, builder -> transferSseEvent(builder, transfer));
             }
         }
 
-        private void handleEnd(
-            EndFW end)
+        private void transferSseEvent(
+            Builder<RegionFW.Builder, RegionFW> builder,
+            TransferFW transfer)
         {
-            doHttpEnd(networkReply, networkReplyId);
-        }
+            final ListFW<RegionFW> regions = transfer.regions();
+            final OctetsFW extension = transfer.extension();
 
-        private void handleAbort(
-            AbortFW abort)
-        {
-            doHttpAbort(networkReply, networkReplyId);
+            String id = null;
+            String type = null;
+            if (extension.sizeof() > 0)
+            {
+                final SseDataExFW sseDataEx = extension.get(sseDataExRO::wrap);
+                id = sseDataEx.id().asString();
+                type = sseDataEx.type().asString();
+            }
+
+            int allocation = DATA_BYTES.length + LF_LF_BYTES.length +
+                             LF_ID_BYTES.length + LF_TYPE_BYTES.length +
+                             extension.sizeof();
+
+            // TODO: handle address == -1L
+            final long address = memory.acquire(allocation);
+            sseEventRW.wrap(memory.resolve(address), allocation);
+
+            // "data:[data]\n"  TODO: split on \n
+            // "id:<id>\n"
+            // "type:<type>\n"
+            // "\n"
+            int indexOfHeader = 0;
+            int limitOfHeader = indexOfHeader;
+            if (!regions.isEmpty())
+            {
+                sseEventRW.putBytes(limitOfHeader, DATA_BYTES);
+                limitOfHeader += DATA_BYTES.length;
+
+                long addressOfHeader = address + indexOfHeader;
+                int sizeOfHeader = limitOfHeader - indexOfHeader;
+                builder.item(r -> r.address(addressOfHeader)
+                                   .length(sizeOfHeader)
+                                   .streamId(networkReplyId));
+                regions.forEach(r -> builder.item(i -> i.address(r.address())
+                                                        .length(r.length())
+                                                        .streamId(r.streamId())));
+            }
+
+            int indexOfTrailer = limitOfHeader;
+            int limitOfTrailer = indexOfTrailer;
+            if (id != null)
+            {
+                sseEventRW.putBytes(limitOfTrailer, LF_ID_BYTES);
+                limitOfTrailer += LF_ID_BYTES.length;
+                limitOfTrailer += sseEventRW.putStringWithoutLengthUtf8(limitOfTrailer, id);
+            }
+            if (type != null)
+            {
+                sseEventRW.putBytes(limitOfTrailer, LF_TYPE_BYTES);
+                limitOfTrailer += LF_TYPE_BYTES.length;
+                limitOfTrailer += sseEventRW.putStringWithoutLengthUtf8(limitOfTrailer, type);
+            }
+            sseEventRW.putBytes(limitOfTrailer, LF_LF_BYTES);
+            limitOfTrailer += LF_LF_BYTES.length;
+
+            long addressOfTrailer = address + indexOfTrailer;
+            int sizeOfTrailer = limitOfTrailer - indexOfTrailer;
+
+            builder.item(r -> r.address(addressOfTrailer)
+                               .length(sizeOfTrailer)
+                               .streamId(0));
+
         }
 
         private void setHttpResponseHeaders(
@@ -585,13 +613,9 @@ public final class ServerStreamFactory implements StreamFactory
         {
             switch (msgTypeId)
             {
-            case WindowFW.TYPE_ID:
-                final WindowFW window = windowRO.wrap(buffer, index, index + length);
-                handleWindow(window);
-                break;
-            case ResetFW.TYPE_ID:
-                final ResetFW reset = resetRO.wrap(buffer, index, index + length);
-                handleReset(reset);
+            case AckFW.TYPE_ID:
+                final AckFW ack = ackRO.wrap(buffer, index, index + length);
+                onAck(ack);
                 break;
             default:
                 // ignore
@@ -599,25 +623,48 @@ public final class ServerStreamFactory implements StreamFactory
             }
         }
 
-        private void handleWindow(
-            WindowFW window)
+        private void onAck(
+            AckFW ack)
         {
-            networkReplyBudget += window.credit();
-            networkReplyPadding = window.padding();
+            final int flags = ack.flags();
+            final ListFW<RegionFW> regions = ack.regions();
 
-            int applicationReplyPadding = networkReplyPadding + MAXIMUM_HEADER_SIZE;
-            final int applicationReplyCredit = networkReplyBudget - applicationReplyBudget;
-            if (applicationReplyCredit > 0)
+            if (regions.isEmpty())
             {
-                doWindow(applicationReplyThrottle, applicationReplyId, applicationReplyCredit, applicationReplyPadding, 0);
-                applicationReplyBudget += applicationReplyCredit;
+                doAck(applicationReplyThrottle, applicationReplyId, flags);
+            }
+            else
+            {
+                doAck(applicationReplyThrottle, applicationReplyId, flags, builder -> ackSseEvent(builder, ack));
             }
         }
 
-        private void handleReset(
-            ResetFW reset)
+        private void ackSseEvent(
+            Builder<RegionFW.Builder, RegionFW> builder,
+            AckFW ack)
         {
-            doReset(applicationReplyThrottle, applicationReplyId);
+            final ListFW<RegionFW> regions = ack.regions();
+            if (!regions.isEmpty())
+            {
+                final RegionFW header = regions.matchFirst(r -> r.streamId() == networkReplyId);
+                final long address = header.address();
+
+                MutableInteger capacity = new MutableInteger();
+                regions.forEach(r ->
+                {
+                    if (r.streamId() == networkReplyId || r.streamId() == 0)
+                    {
+                        capacity.value += r.length();
+                    }
+                    else
+                    {
+                        builder.item(i -> i.address(r.address())
+                                           .length(r.length())
+                                           .streamId(r.streamId()));
+                    }
+                });
+                memory.release(address, capacity.value);
+            }
         }
     }
 
@@ -649,50 +696,32 @@ public final class ServerStreamFactory implements StreamFactory
                          .sizeof();
     }
 
-    private int doHttpData(
+    private void doHttpTransfer(
         MessageConsumer stream,
         long targetId,
-        int padding,
-        OctetsFW eventOctets,
-        String eventId,
-        String eventType)
+        int flags,
+        Consumer<Builder<RegionFW.Builder, RegionFW>> regions)
     {
-        String eventData = eventOctets != null
-                ? eventOctets.buffer().getStringWithoutLengthUtf8(eventOctets.offset(), eventOctets.sizeof())
-                : null;
-
-        DataFW data = dataRW.wrap(writeBuffer, 0, writeBuffer.capacity())
+        TransferFW transfer = transferRW.wrap(writeBuffer, 0, writeBuffer.capacity())
                 .streamId(targetId)
-                .groupId(0)
-                .padding(padding)
-                .payload(p -> p.set(visitSseEvent(eventData, eventId, eventType)))
+                .flags(flags)
+                .regions(regions)
                 .build();
 
-        stream.accept(data.typeId(), data.buffer(), data.offset(), data.sizeof());
-
-        return data.length();
+        stream.accept(transfer.typeId(), transfer.buffer(), transfer.offset(), transfer.sizeof());
     }
 
-    private void doHttpEnd(
+    private void doHttpTransfer(
         MessageConsumer stream,
-        long streamId)
+        long targetId,
+        int flags)
     {
-        final EndFW end = endRW.wrap(writeBuffer, 0, writeBuffer.capacity())
-                               .streamId(streamId)
-                               .build();
+        TransferFW transfer = transferRW.wrap(writeBuffer, 0, writeBuffer.capacity())
+                .streamId(targetId)
+                .flags(flags)
+                .build();
 
-        stream.accept(end.typeId(), end.buffer(), end.offset(), end.sizeof());
-    }
-
-    private void doHttpAbort(
-        MessageConsumer stream,
-        long streamId)
-    {
-        final AbortFW abort = abortRW.wrap(writeBuffer, 0, writeBuffer.capacity())
-                                     .streamId(streamId)
-                                     .build();
-
-        stream.accept(abort.typeId(), abort.buffer(), abort.offset(), abort.sizeof());
+        stream.accept(transfer.typeId(), transfer.buffer(), transfer.offset(), transfer.sizeof());
     }
 
     private void doSseBegin(
@@ -714,27 +743,17 @@ public final class ServerStreamFactory implements StreamFactory
         stream.accept(begin.typeId(), begin.buffer(), begin.offset(), begin.sizeof());
     }
 
-    private void doSseAbort(
+    private void doSseTransfer(
         MessageConsumer stream,
-        long streamId)
+        long streamId,
+        int flags)
     {
-        // TODO: SseAbortEx
-        final AbortFW abort = abortRW.wrap(writeBuffer, 0, writeBuffer.capacity())
-                .streamId(streamId)
-                .build();
+        final TransferFW transfer = transferRW.wrap(writeBuffer, 0, writeBuffer.capacity())
+                                              .streamId(streamId)
+                                              .flags(flags)
+                                              .build();
 
-        stream.accept(abort.typeId(), abort.buffer(), abort.offset(), abort.sizeof());
-    }
-
-    private void doSseEnd(
-        MessageConsumer stream,
-        long streamId)
-    {
-        final EndFW end = endRW.wrap(writeBuffer, 0, writeBuffer.capacity())
-                               .streamId(streamId)
-                               .build();
-
-        stream.accept(end.typeId(), end.buffer(), end.offset(), end.sizeof());
+        stream.accept(transfer.typeId(), transfer.buffer(), transfer.offset(), transfer.sizeof());
     }
 
     private Flyweight.Builder.Visitor visitSseBeginEx(
@@ -749,46 +768,29 @@ public final class ServerStreamFactory implements StreamFactory
                        .sizeof();
     }
 
-    private Flyweight.Builder.Visitor visitSseEvent(
-        String data,
-        String id,
-        String type)
+    private void doAck(
+        MessageConsumer throttle,
+        long throttleId,
+        int flags,
+        Consumer<ListFW.Builder<RegionFW.Builder, RegionFW>> regions)
     {
-        // TODO: verify valid UTF-8 and no LF chars in payload
-        //       would require multiple "data:" lines in event
-
-        return (buffer, offset, limit) ->
-            sseEventRW.wrap(buffer, offset, limit)
-                      .data(data)
-                      .id(id)
-                      .type(type)
-                      .build()
-                      .sizeof();
-    }
-
-    private void doWindow(
-        final MessageConsumer throttle,
-        final long throttleId,
-        final int credit,
-        final int padding,
-        final int groupId)
-    {
-        final WindowFW window = windowRW.wrap(writeBuffer, 0, writeBuffer.capacity())
-                .streamId(throttleId)
-                .credit(credit)
-                .padding(padding)
-                .groupId(groupId)
-                .build();
-
-        throttle.accept(window.typeId(), window.buffer(), window.offset(), window.sizeof());
-    }
-
-    private void doReset(
-        final MessageConsumer throttle,
-        final long throttleId)
-    {
-        final ResetFW reset = resetRW.wrap(writeBuffer, 0, writeBuffer.capacity())
+        final AckFW ack = ackRW.wrap(writeBuffer, 0, writeBuffer.capacity())
                .streamId(throttleId)
+               .flags(flags)
+               .regions(regions)
+               .build();
+
+        throttle.accept(ack.typeId(), ack.buffer(), ack.offset(), ack.sizeof());
+    }
+
+    private void doAck(
+        MessageConsumer throttle,
+        long throttleId,
+        int flags)
+    {
+        final AckFW reset = ackRW.wrap(writeBuffer, 0, writeBuffer.capacity())
+               .streamId(throttleId)
+               .flags(flags)
                .build();
 
         throttle.accept(reset.typeId(), reset.buffer(), reset.offset(), reset.sizeof());

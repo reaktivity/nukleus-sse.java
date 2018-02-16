@@ -16,17 +16,14 @@
 package org.reaktivity.nukleus.sse.internal.stream;
 
 import java.util.function.Function;
-import java.util.function.IntUnaryOperator;
 import java.util.function.LongConsumer;
-import java.util.function.LongFunction;
 import java.util.function.LongSupplier;
-import java.util.function.Supplier;
 
 import org.agrona.DirectBuffer;
 import org.agrona.MutableDirectBuffer;
 import org.agrona.collections.Long2ObjectHashMap;
 import org.reaktivity.nukleus.Configuration;
-import org.reaktivity.nukleus.buffer.BufferPool;
+import org.reaktivity.nukleus.buffer.MemoryManager;
 import org.reaktivity.nukleus.route.RouteManager;
 import org.reaktivity.nukleus.sse.internal.types.control.RouteFW;
 import org.reaktivity.nukleus.sse.internal.types.control.UnrouteFW;
@@ -46,6 +43,7 @@ public final class ServerStreamFactoryBuilder implements StreamFactoryBuilder
     private final Long2ObjectHashMap<LongConsumer> bytesReadByteRouteId;
 
     private RouteManager router;
+    private MemoryManager memory;
     private MutableDirectBuffer writeBuffer;
     private LongSupplier supplyStreamId;
     private LongSupplier supplyCorrelationId;
@@ -93,20 +91,6 @@ public final class ServerStreamFactoryBuilder implements StreamFactoryBuilder
     }
 
     @Override
-    public ServerStreamFactoryBuilder setGroupBudgetClaimer(
-        LongFunction<IntUnaryOperator> groupBudgetClaimer)
-    {
-        return this;
-    }
-
-    @Override
-    public ServerStreamFactoryBuilder setGroupBudgetReleaser(
-        LongFunction<IntUnaryOperator> groupBudgetReleaser)
-    {
-        return this;
-    }
-
-    @Override
     public ServerStreamFactoryBuilder setCorrelationIdSupplier(
         LongSupplier supplyCorrelationId)
     {
@@ -115,9 +99,10 @@ public final class ServerStreamFactoryBuilder implements StreamFactoryBuilder
     }
 
     @Override
-    public StreamFactoryBuilder setBufferPoolSupplier(
-        Supplier<BufferPool> supplyBufferPool)
+    public StreamFactoryBuilder setMemoryManager(
+        MemoryManager memoryManager)
     {
+        this.memory = memoryManager;
         return this;
     }
 
@@ -197,6 +182,7 @@ public final class ServerStreamFactoryBuilder implements StreamFactoryBuilder
         return new ServerStreamFactory(
                 config,
                 router,
+                memory,
                 writeBuffer,
                 supplyStreamId,
                 supplyCorrelationId,

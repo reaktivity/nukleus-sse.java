@@ -31,7 +31,7 @@ import org.reaktivity.reaktor.test.ReaktorRule;
 
 import org.junit.Assert;
 
-public class FrameAndBytesCounterIT
+public class CountersIT
 {
     private final K3poRule k3po = new K3poRule()
             .addScriptRoot("route", "org/reaktivity/specification/nukleus/sse/control/route")
