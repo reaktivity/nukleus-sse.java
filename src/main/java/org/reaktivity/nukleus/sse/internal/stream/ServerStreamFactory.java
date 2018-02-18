@@ -31,7 +31,6 @@ import java.util.regex.Pattern;
 import org.agrona.DirectBuffer;
 import org.agrona.MutableDirectBuffer;
 import org.agrona.collections.Long2ObjectHashMap;
-import org.agrona.collections.MutableInteger;
 import org.agrona.concurrent.UnsafeBuffer;
 import org.reaktivity.nukleus.Configuration;
 import org.reaktivity.nukleus.buffer.MemoryManager;
@@ -421,6 +420,7 @@ public final class ServerStreamFactory implements StreamFactory
 
         private LongConsumer countReadBytes;
         private LongSupplier countReadFrames;
+        private int ackProgress;
 
         private ServerConnectReplyStream(
             MessageConsumer applicationReplyThrottle,
@@ -594,7 +594,7 @@ public final class ServerStreamFactory implements StreamFactory
 
             builder.item(r -> r.address(addressOfTrailer)
                                .length(sizeOfTrailer)
-                               .streamId(0));
+                               .streamId(networkReplyId));
 
         }
 
@@ -640,30 +640,37 @@ public final class ServerStreamFactory implements StreamFactory
         }
 
         private void ackSseEvent(
-            Builder<RegionFW.Builder, RegionFW> builder,
+            ListFW.Builder<RegionFW.Builder, RegionFW> builder,
             AckFW ack)
         {
             final ListFW<RegionFW> regions = ack.regions();
             if (!regions.isEmpty())
             {
-                final RegionFW header = regions.matchFirst(r -> r.streamId() == networkReplyId);
-                final long address = header.address();
+                regions.forEach(r -> ackSseEventRegion(builder, r));
+            }
+        }
 
-                MutableInteger capacity = new MutableInteger();
-                regions.forEach(r ->
+        private void ackSseEventRegion(
+            ListFW.Builder<RegionFW.Builder, RegionFW> builder,
+            RegionFW region)
+        {
+            if (region.streamId() == networkReplyId)
+            {
+                if (ackProgress == 0)
                 {
-                    if (r.streamId() == networkReplyId || r.streamId() == 0)
-                    {
-                        capacity.value += r.length();
-                    }
-                    else
-                    {
-                        builder.item(i -> i.address(r.address())
-                                           .length(r.length())
-                                           .streamId(r.streamId()));
-                    }
-                });
-                memory.release(address, capacity.value);
+                    ackProgress = region.length();
+                }
+                else
+                {
+                    memory.release(region.address(), ackProgress + region.length());
+                    ackProgress = 0;
+                }
+            }
+            else
+            {
+                builder.item(i -> i.address(region.address())
+                                   .length(region.length())
+                                   .streamId(region.streamId()));
             }
         }
     }
