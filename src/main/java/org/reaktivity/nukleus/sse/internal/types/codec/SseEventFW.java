@@ -15,6 +15,7 @@
  */
 package org.reaktivity.nukleus.sse.internal.types.codec;
 
+import static java.lang.Long.numberOfLeadingZeros;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 import org.agrona.DirectBuffer;
@@ -25,13 +26,38 @@ public final class SseEventFW extends Flyweight
 {
     private static final byte[] DATA_FIELD_HEADER = "data:".getBytes(UTF_8);
     private static final byte[] ID_FIELD_HEADER = "id:".getBytes(UTF_8);
+    private static final byte[] TIMESTAMP_FIELD_HEADER = "timestamp:".getBytes(UTF_8);
     private static final byte[] TYPE_FIELD_HEADER = "event:".getBytes(UTF_8);
+
+    private static final byte[] TIMESTAMP_HEX_PREFIX = "0x".getBytes(UTF_8);
 
     private static final byte FIELD_TRAILER = 0x0a;
     private static final int FIELD_TRAILER_LENGTH = 1;
 
     private static final byte EVENT_TRAILER = 0x0a;
     private static final int EVENT_TRAILER_LENGTH = 1;
+    private static final int TIMESTAMP_FIELD_HEADER_MAX_LENGTH = 18;
+
+    private static final int ASCII_LC_A_MINUS_10 = 'a' - 10;
+    private static final int ASCII_0 = '0';
+    private static final int HEX_MASK = 0xf;
+
+    static int putHexLong(
+        long value,
+        MutableDirectBuffer buffer,
+        int offset)
+    {
+        int sizeOfHex = Math.max(((Long.SIZE - numberOfLeadingZeros(value) + (3)) / 4), 1);
+        int bytePos = sizeOfHex;
+        do
+        {
+            final int index = sizeOfHex - bytePos;
+            final byte hexValue = (byte) ((value >> (bytePos - 1) * 4) & HEX_MASK);
+            bytePos--;
+            buffer.putByte(offset + index, (byte) (hexValue < 10 ? hexValue + ASCII_0 : hexValue + ASCII_LC_A_MINUS_10));
+        } while (value != 0 && bytePos > 0);
+        return sizeOfHex;
+    }
 
     @Override
     public int limit()
@@ -58,6 +84,7 @@ public final class SseEventFW extends Flyweight
 
     public static final class Builder extends Flyweight.Builder<SseEventFW>
     {
+
         public Builder()
         {
             super(new SseEventFW());
@@ -140,6 +167,36 @@ public final class SseEventFW extends Flyweight
             return this;
         }
 
+        public Builder timestamp(long timestamp)
+        {
+            final int timestampSize = Math.max(((Long.SIZE - numberOfLeadingZeros(timestamp) + (3)) / 4), 1);
+
+            checkLimit(limit() +
+                    TIMESTAMP_FIELD_HEADER.length +
+                    TIMESTAMP_HEX_PREFIX.length +
+                    timestampSize +
+                    FIELD_TRAILER_LENGTH,
+                    maxLimit());
+
+            limit(limit() - EVENT_TRAILER_LENGTH);
+
+            buffer().putBytes(limit(), TIMESTAMP_FIELD_HEADER);
+            limit(limit() + TIMESTAMP_FIELD_HEADER.length);
+
+            buffer().putBytes(limit(), TIMESTAMP_HEX_PREFIX);
+            limit(limit() + TIMESTAMP_HEX_PREFIX.length);
+
+            final int bytesAdded = putHexLong(timestamp, buffer(), limit());
+            limit(limit() + bytesAdded);
+
+            buffer().putByte(limit(), FIELD_TRAILER);
+            limit(limit() + FIELD_TRAILER_LENGTH);
+
+            buffer().putByte(limit(), EVENT_TRAILER);
+            limit(limit() + EVENT_TRAILER_LENGTH);
+            return this;
+        }
+
         public Builder type(
             String type)
         {
@@ -170,5 +227,6 @@ public final class SseEventFW extends Flyweight
 
             return this;
         }
+
     }
 }
