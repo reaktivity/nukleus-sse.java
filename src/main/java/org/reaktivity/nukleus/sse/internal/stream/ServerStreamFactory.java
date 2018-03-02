@@ -38,6 +38,7 @@ import org.reaktivity.nukleus.sse.internal.types.Flyweight;
 import org.reaktivity.nukleus.sse.internal.types.HttpHeaderFW;
 import org.reaktivity.nukleus.sse.internal.types.ListFW;
 import org.reaktivity.nukleus.sse.internal.types.OctetsFW;
+import org.reaktivity.nukleus.sse.internal.types.OctetsFW.Builder;
 import org.reaktivity.nukleus.sse.internal.types.codec.SseEventFW;
 import org.reaktivity.nukleus.sse.internal.types.control.RouteFW;
 import org.reaktivity.nukleus.sse.internal.types.control.SseRouteExFW;
@@ -358,11 +359,15 @@ public final class ServerStreamFactory implements StreamFactory
                 final long newConnectId = supplyStreamId.getAsLong();
                 final long newCorrelationId = supplyCorrelationId.getAsLong();
 
+                final boolean timestampRequested = httpBeginEx.headers().anyMatch(header ->
+                    "accept".equals(header.name().asString()) && header.value().asString().contains("ext=timestamp"));
+
                 ServerHandshake handshake = new ServerHandshake(
                     acceptName,
                     correlationId,
                     readFrameCounter,
-                    readBytesAccumulator);
+                    readBytesAccumulator,
+                    timestampRequested);
 
                 correlations.put(newCorrelationId, handshake);
 
@@ -434,6 +439,7 @@ public final class ServerStreamFactory implements StreamFactory
         private int applicationReplyBudget;
         private LongConsumer readBytesAccumulator;
         private LongSupplier readFrameCounter;
+        private boolean timestampRequested;
 
         private ServerConnectReplyStream(
             MessageConsumer applicationReplyThrottle,
@@ -511,8 +517,26 @@ public final class ServerStreamFactory implements StreamFactory
                 final MessageConsumer newNetworkReply = router.supplyTarget(networkReplyName);
                 final long newNetworkReplyId = supplyStreamId.getAsLong();
                 final long newCorrelationId = handshake.correlationId();
+                this.timestampRequested = handshake.timestampRequested();
 
-                doHttpBegin(newNetworkReply, newNetworkReplyId, 0L, newCorrelationId, this::setHttpResponseHeaders);
+                if (timestampRequested)
+                {
+                    doHttpBegin(
+                        newNetworkReply,
+                        newNetworkReplyId,
+                        0L,
+                        newCorrelationId,
+                        this::setHttpResponseHeadersWithTimestampExt);
+                }
+                else
+                {
+                    doHttpBegin(
+                        newNetworkReply,
+                        newNetworkReplyId,
+                        0L,
+                        newCorrelationId,
+                        this::setHttpResponseHeaders);
+                }
                 router.setThrottle(networkReplyName, newNetworkReplyId, this::handleThrottle);
 
                 this.networkReply = newNetworkReply;
@@ -546,14 +570,24 @@ public final class ServerStreamFactory implements StreamFactory
 
                 String id = null;
                 String type = null;
+                long timestamp = 0;
                 if (extension.sizeof() > 0)
                 {
                     final SseDataExFW sseDataEx = extension.get(sseDataExRO::wrap);
                     id = sseDataEx.id().asString();
                     type = sseDataEx.type().asString();
+                    timestamp = sseDataEx.timestamp();
                 }
 
-                final int bytesWritten = doHttpData(networkReply, networkReplyId, networkReplyPadding, payload, id, type);
+                final int bytesWritten = doHttpData(
+                    networkReply,
+                    networkReplyId,
+                    networkReplyPadding,
+                    payload,
+                    id,
+                    type,
+                    timestampRequested,
+                    timestamp);
                 networkReplyBudget -= bytesWritten + networkReplyPadding;
             }
         }
@@ -575,6 +609,13 @@ public final class ServerStreamFactory implements StreamFactory
         {
             headers.item(h -> h.name(":status").value("200"));
             headers.item(h -> h.name("content-type").value("text/event-stream"));
+        }
+
+        private void setHttpResponseHeadersWithTimestampExt(
+            ListFW.Builder<HttpHeaderFW.Builder, HttpHeaderFW> headers)
+        {
+            headers.item(h -> h.name(":status").value("200"));
+            headers.item(h -> h.name("content-type").value("text/event-stream;ext=timestamp"));
         }
 
         private void handleThrottle(
@@ -655,18 +696,25 @@ public final class ServerStreamFactory implements StreamFactory
         int padding,
         OctetsFW eventOctets,
         String eventId,
-        String eventType)
+        String eventType,
+        boolean timestampRequested,
+        long timestamp)
     {
         String eventData = eventOctets != null
                 ? eventOctets.buffer().getStringWithoutLengthUtf8(eventOctets.offset(), eventOctets.sizeof())
                 : null;
 
+
+        final Consumer<Builder> payloadMutator = (timestampRequested) ?
+                p -> p.set(visitSseEvent(eventData, eventId, eventType, timestamp)):
+                p -> p.set(visitSseEvent(eventData, eventId, eventType));
+
         DataFW data = dataRW.wrap(writeBuffer, 0, writeBuffer.capacity())
-                .streamId(targetId)
-                .groupId(0)
-                .padding(padding)
-                .payload(p -> p.set(visitSseEvent(eventData, eventId, eventType)))
-                .build();
+            .streamId(targetId)
+            .groupId(0)
+            .padding(padding)
+            .payload(payloadMutator)
+            .build();
 
         stream.accept(data.typeId(), data.buffer(), data.offset(), data.sizeof());
 
@@ -760,6 +808,25 @@ public final class ServerStreamFactory implements StreamFactory
         return (buffer, offset, limit) ->
             sseEventRW.wrap(buffer, offset, limit)
                       .data(data)
+                      .id(id)
+                      .type(type)
+                      .build()
+                      .sizeof();
+    }
+
+    private Flyweight.Builder.Visitor visitSseEvent(
+            String data,
+            String id,
+            String type,
+            long timestamp)
+    {
+        // TODO: verify valid UTF-8 and no LF chars in payload
+        //       would require multiple "data:" lines in event
+
+        return (buffer, offset, limit) ->
+            sseEventRW.wrap(buffer, offset, limit)
+                      .data(data)
+                      .timestamp(timestamp)
                       .id(id)
                       .type(type)
                       .build()
