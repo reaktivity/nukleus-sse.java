@@ -32,7 +32,8 @@ public class TimestampIT
     private final K3poRule k3po = new K3poRule()
             .addScriptRoot("route", "org/reaktivity/specification/nukleus/sse/control/route")
             .addScriptRoot("client", "org/reaktivity/specification/sse/timestamp")
-            .addScriptRoot("server", "org/reaktivity/specification/nukleus/sse/streams/data");
+            .addScriptRoot("server", "org/reaktivity/specification/nukleus/sse/streams/data")
+            .addScriptRoot("serverWithType", "org/reaktivity/specification/nukleus/sse/streams/type");
 
     private final TestRule timeout = new DisableOnDebug(new Timeout(10, SECONDS));
 
@@ -63,6 +64,16 @@ public class TimestampIT
         "${client}/non.empty/request",
         "${server}/non.empty/response" })
     public void shouldReceiveNonEmptyMessage() throws Exception
+    {
+        k3po.finish();
+    }
+
+    @Test
+    @Specification({
+        "${route}/server/controller",
+        "${client}/non.empty.with.type/request",
+        "${serverWithType}/non.empty/response" })
+    public void shouldReceiveNonEmptyMessageWithType() throws Exception
     {
         k3po.finish();
     }
