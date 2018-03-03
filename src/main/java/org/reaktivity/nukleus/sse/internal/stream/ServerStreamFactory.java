@@ -562,6 +562,7 @@ public final class ServerStreamFactory implements StreamFactory
             if (applicationReplyBudget < 0)
             {
                 doReset(applicationReplyThrottle, applicationReplyId);
+                doSseAbort(networkReply, networkReplyId);
             }
             else
             {
