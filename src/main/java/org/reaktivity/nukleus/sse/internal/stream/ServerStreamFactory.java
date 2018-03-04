@@ -555,9 +555,11 @@ public final class ServerStreamFactory implements StreamFactory
         private void handleData(
             DataFW data)
         {
+            final int dataLength = Math.max(data.length(), 0);
+
             this.readFrameCounter.getAsLong();
-            this.readBytesAccumulator.accept(data.length());
-            applicationReplyBudget -= data.length() + data.padding();
+            this.readBytesAccumulator.accept(dataLength);
+            applicationReplyBudget -= dataLength + data.padding();
 
             if (applicationReplyBudget < 0)
             {
