@@ -21,6 +21,7 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 import org.agrona.DirectBuffer;
 import org.agrona.MutableDirectBuffer;
 import org.reaktivity.nukleus.sse.internal.types.Flyweight;
+import org.reaktivity.nukleus.sse.internal.types.OctetsFW;
 
 public final class SseEventFW extends Flyweight
 {
@@ -106,30 +107,30 @@ public final class SseEventFW extends Flyweight
         }
 
         public Builder data(
-            String data)
+            OctetsFW data)
         {
             if (data != null)
             {
-                final byte[] dataBytes = data.getBytes(UTF_8);
-
                 checkLimit(limit() +
                            DATA_FIELD_HEADER.length +
-                           dataBytes.length +
+                           data.sizeof() +
                            FIELD_TRAILER_LENGTH,
                            maxLimit());
 
                 limit(limit() - EVENT_TRAILER_LENGTH);
 
-                buffer().putBytes(limit(), DATA_FIELD_HEADER);
+                final MutableDirectBuffer buffer = buffer();
+
+                buffer.putBytes(limit(), DATA_FIELD_HEADER);
                 limit(limit() + DATA_FIELD_HEADER.length);
 
-                buffer().putBytes(limit(), dataBytes);
-                limit(limit() + dataBytes.length);
+                buffer.putBytes(limit(), data.buffer(), data.offset(), data.sizeof());
+                limit(limit() + data.sizeof());
 
-                buffer().putByte(limit(), FIELD_TRAILER);
+                buffer.putByte(limit(), FIELD_TRAILER);
                 limit(limit() + FIELD_TRAILER_LENGTH);
 
-                buffer().putByte(limit(), EVENT_TRAILER);
+                buffer.putByte(limit(), EVENT_TRAILER);
                 limit(limit() + EVENT_TRAILER_LENGTH);
             }
 
@@ -137,15 +138,13 @@ public final class SseEventFW extends Flyweight
         }
 
         public Builder id(
-            String id)
+            DirectBuffer id)
         {
             if (id != null)
             {
-                final byte[] idBytes = id.getBytes(UTF_8);
-
                 checkLimit(limit() +
                            ID_FIELD_HEADER.length +
-                           idBytes.length +
+                           id.capacity() +
                            FIELD_TRAILER_LENGTH,
                            maxLimit());
 
@@ -154,8 +153,8 @@ public final class SseEventFW extends Flyweight
                 buffer().putBytes(limit(), ID_FIELD_HEADER);
                 limit(limit() + ID_FIELD_HEADER.length);
 
-                buffer().putBytes(limit(), idBytes);
-                limit(limit() + idBytes.length);
+                buffer().putBytes(limit(), id, 0, id.capacity());
+                limit(limit() + id.capacity());
 
                 buffer().putByte(limit(), FIELD_TRAILER);
                 limit(limit() + FIELD_TRAILER_LENGTH);
@@ -198,15 +197,13 @@ public final class SseEventFW extends Flyweight
         }
 
         public Builder type(
-            String type)
+            DirectBuffer type)
         {
             if (type != null)
             {
-                final byte[] typeBytes = type.getBytes(UTF_8);
-
                 checkLimit(limit() +
                            TYPE_FIELD_HEADER.length +
-                           typeBytes.length +
+                           type.capacity() +
                            FIELD_TRAILER_LENGTH,
                            maxLimit());
 
@@ -215,8 +212,8 @@ public final class SseEventFW extends Flyweight
                 buffer().putBytes(limit(), TYPE_FIELD_HEADER);
                 limit(limit() + TYPE_FIELD_HEADER.length);
 
-                buffer().putBytes(limit(), typeBytes);
-                limit(limit() + typeBytes.length);
+                buffer().putBytes(limit(), type, 0, type.capacity());
+                limit(limit() + type.capacity());
 
                 buffer().putByte(limit(), FIELD_TRAILER);
                 limit(limit() + FIELD_TRAILER_LENGTH);
