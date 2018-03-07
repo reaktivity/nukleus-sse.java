@@ -555,9 +555,11 @@ public final class ServerStreamFactory implements StreamFactory
         private void handleData(
             DataFW data)
         {
+            final int dataLength = Math.max(data.length(), 0);
+
             this.readFrameCounter.getAsLong();
-            this.readBytesAccumulator.accept(data.length());
-            applicationReplyBudget -= data.length() + data.padding();
+            this.readBytesAccumulator.accept(dataLength);
+            applicationReplyBudget -= dataLength + data.padding();
 
             if (applicationReplyBudget < 0)
             {
@@ -569,14 +571,14 @@ public final class ServerStreamFactory implements StreamFactory
                 final OctetsFW payload = data.payload();
                 final OctetsFW extension = data.extension();
 
-                String id = null;
-                String type = null;
+                DirectBuffer id = null;
+                DirectBuffer type = null;
                 long timestamp = 0;
                 if (extension.sizeof() > 0)
                 {
                     final SseDataExFW sseDataEx = extension.get(sseDataExRO::wrap);
-                    id = sseDataEx.id().asString();
-                    type = sseDataEx.type().asString();
+                    id = sseDataEx.id().value();
+                    type = sseDataEx.type().value();
                     timestamp = sseDataEx.timestamp();
                 }
 
@@ -695,20 +697,15 @@ public final class ServerStreamFactory implements StreamFactory
         MessageConsumer stream,
         long targetId,
         int padding,
-        OctetsFW eventOctets,
-        String eventId,
-        String eventType,
+        OctetsFW eventData,
+        DirectBuffer id,
+        DirectBuffer type,
         boolean timestampRequested,
         long timestamp)
     {
-        String eventData = eventOctets != null
-                ? eventOctets.buffer().getStringWithoutLengthUtf8(eventOctets.offset(), eventOctets.sizeof())
-                : null;
-
-
-        final Consumer<Builder> payloadMutator = (timestampRequested) ?
-                p -> p.set(visitSseEvent(eventData, eventId, eventType, timestamp)):
-                p -> p.set(visitSseEvent(eventData, eventId, eventType));
+        final Consumer<Builder> payloadMutator = timestampRequested ?
+                p -> p.set(visitSseEvent(eventData, id, type, timestamp)):
+                p -> p.set(visitSseEvent(eventData, id, type));
 
         DataFW data = dataRW.wrap(writeBuffer, 0, writeBuffer.capacity())
             .streamId(targetId)
@@ -799,9 +796,9 @@ public final class ServerStreamFactory implements StreamFactory
     }
 
     private Flyweight.Builder.Visitor visitSseEvent(
-        String data,
-        String id,
-        String type)
+        OctetsFW data,
+        DirectBuffer id,
+        DirectBuffer type)
     {
         // TODO: verify valid UTF-8 and no LF chars in payload
         //       would require multiple "data:" lines in event
@@ -816,10 +813,10 @@ public final class ServerStreamFactory implements StreamFactory
     }
 
     private Flyweight.Builder.Visitor visitSseEvent(
-            String data,
-            String id,
-            String type,
-            long timestamp)
+        OctetsFW data,
+        DirectBuffer id,
+        DirectBuffer type,
+        long timestamp)
     {
         // TODO: verify valid UTF-8 and no LF chars in payload
         //       would require multiple "data:" lines in event
