@@ -50,13 +50,13 @@
     <jmh.profilers.version>0.1.3</jmh.profilers.version>
 
     <k3po.version>3.0.0-alpha-88</k3po.version>
-    <k3po.nukleus.ext.version>0.18</k3po.nukleus.ext.version>
+    <k3po.nukleus.ext.version>0.20</k3po.nukleus.ext.version>
 
     <nukleus.plugin.version>0.26</nukleus.plugin.version>
     <nukleus.version>0.17</nukleus.version>
 
-    <nukleus.sse.spec.version>0.13</nukleus.sse.spec.version>
-    <reaktor.version>0.38</reaktor.version>
+    <nukleus.sse.spec.version>0.14</nukleus.sse.spec.version>
+    <reaktor.version>0.39</reaktor.version>
   </properties>
 
   <dependencies>
