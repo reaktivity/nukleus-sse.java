@@ -371,8 +371,8 @@ public final class ServerStreamFactory implements StreamFactory
 
                 correlations.put(newCorrelationId, handshake);
 
-                doSseBegin(connectTarget, newConnectId, connectRef, newCorrelationId, pathInfo, lastEventId);
                 router.setThrottle(connectName, newConnectId, this::handleThrottle);
+                doSseBegin(connectTarget, newConnectId, connectRef, newCorrelationId, pathInfo, lastEventId);
 
                 this.connectTarget = connectTarget;
                 this.connectId = newConnectId;
@@ -519,6 +519,7 @@ public final class ServerStreamFactory implements StreamFactory
                 final long newCorrelationId = handshake.correlationId();
                 this.timestampRequested = handshake.timestampRequested();
 
+                router.setThrottle(networkReplyName, newNetworkReplyId, this::handleThrottle);
                 if (timestampRequested)
                 {
                     doHttpBegin(
@@ -537,7 +538,6 @@ public final class ServerStreamFactory implements StreamFactory
                         newCorrelationId,
                         this::setHttpResponseHeaders);
                 }
-                router.setThrottle(networkReplyName, newNetworkReplyId, this::handleThrottle);
 
                 this.networkReply = newNetworkReply;
                 this.networkReplyId = newNetworkReplyId;
