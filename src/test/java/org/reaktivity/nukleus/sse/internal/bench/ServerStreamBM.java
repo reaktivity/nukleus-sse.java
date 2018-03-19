@@ -31,7 +31,6 @@ import org.agrona.collections.MutableInteger;
 import org.agrona.concurrent.AtomicBuffer;
 import org.agrona.concurrent.MessageHandler;
 import org.agrona.concurrent.UnsafeBuffer;
-import org.agrona.concurrent.ringbuffer.ManyToOneRingBuffer;
 import org.agrona.concurrent.ringbuffer.OneToOneRingBuffer;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
@@ -261,7 +260,7 @@ public class ServerStreamBM
 
         this.ring = new UnsafeBuffer(ByteBuffer.allocateDirect(1024 * 1024 * 64 + TRAILER_LENGTH));
         this.reader = new OneToOneRingBuffer(ring);
-        this.writer = new ManyToOneRingBuffer(ring);
+        this.writer = new OneToOneRingBuffer(ring);
     }
 
     @Setup(Level.Iteration)
@@ -273,7 +272,7 @@ public class ServerStreamBM
 
     private AtomicBuffer ring;
     private OneToOneRingBuffer reader;
-    private ManyToOneRingBuffer writer;
+    private OneToOneRingBuffer writer;
 
     @Benchmark
     @Group("data")
