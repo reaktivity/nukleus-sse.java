@@ -16,18 +16,27 @@
 package org.reaktivity.nukleus.sse.internal.bench;
 
 import static java.util.concurrent.TimeUnit.SECONDS;
+import static org.agrona.concurrent.ringbuffer.RingBufferDescriptor.TRAILER_LENGTH;
 
+import java.nio.ByteBuffer;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicLong;
 
+import org.agrona.DirectBuffer;
 import org.agrona.MutableDirectBuffer;
+import org.agrona.collections.Long2ObjectHashMap;
 import org.agrona.collections.MutableInteger;
+import org.agrona.concurrent.AtomicBuffer;
+import org.agrona.concurrent.MessageHandler;
 import org.agrona.concurrent.UnsafeBuffer;
+import org.agrona.concurrent.ringbuffer.ManyToOneRingBuffer;
+import org.agrona.concurrent.ringbuffer.OneToOneRingBuffer;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Fork;
+import org.openjdk.jmh.annotations.Group;
 import org.openjdk.jmh.annotations.Level;
 import org.openjdk.jmh.annotations.Measurement;
 import org.openjdk.jmh.annotations.Mode;
@@ -36,6 +45,7 @@ import org.openjdk.jmh.annotations.Scope;
 import org.openjdk.jmh.annotations.Setup;
 import org.openjdk.jmh.annotations.State;
 import org.openjdk.jmh.annotations.Warmup;
+import org.openjdk.jmh.infra.Control;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;
 import org.openjdk.jmh.runner.options.Options;
@@ -52,6 +62,7 @@ import org.reaktivity.nukleus.sse.internal.types.control.RouteFW;
 import org.reaktivity.nukleus.sse.internal.types.control.SseRouteExFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.BeginFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.DataFW;
+import org.reaktivity.nukleus.sse.internal.types.stream.FrameFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.HttpBeginExFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.WindowFW;
 import org.reaktivity.nukleus.stream.StreamFactory;
@@ -127,11 +138,14 @@ public class ServerStreamBM
     }
 
     private DataFW dataRO;
+    private Long2ObjectHashMap<MessageConsumer> streams;
     private MessageConsumer stream;
 
     @Setup(Level.Trial)
     public void init()
     {
+        this.streams = new Long2ObjectHashMap<>();
+
         Configuration config = new Configuration();
         BufferPool bufferPool = new DefaultBufferPool(0, 0);
         MutableInteger correlationId = new MutableInteger();
@@ -153,12 +167,12 @@ public class ServerStreamBM
                 .setStreamIdSupplier(() -> ++streamId.value)
                 .setWriteBuffer(writeBuffer)
                 .build();
-
         BeginFW beginRO = new BeginFW();
+        DataFW dataRO = new DataFW();
         WindowFW.Builder windowRW = new WindowFW.Builder();
         HttpBeginExFW.Builder httpBeginExRW = new HttpBeginExFW.Builder();
-
         MutableDirectBuffer sourceBuffer = new UnsafeBuffer(new byte[1024]);
+        MessageConsumer[] throttleRef = new MessageConsumer[1];
         router.setTarget("source", (t, b, o, l) ->
         {
             if (t == BeginFW.TYPE_ID)
@@ -174,9 +188,20 @@ public class ServerStreamBM
                                           .groupId(0L)
                                           .build();
                 throttle.accept(window.typeId(), window.buffer(), window.offset(), window.sizeof());
+                throttleRef[0] = throttle;
+            }
+            else if (t == DataFW.TYPE_ID)
+            {
+                DataFW data = dataRO.wrap(b, o, l);
+                WindowFW window = windowRW.wrap(sourceBuffer, 0, sourceBuffer.capacity())
+                        .streamId(data.streamId())
+                        .credit(data.length())
+                        .padding(data.padding())
+                        .groupId(data.groupId())
+                        .build();
+                throttleRef[0].accept(window.typeId(), window.buffer(), window.offset(), window.sizeof());
             }
         });
-
         MutableDirectBuffer targetBuffer = new UnsafeBuffer(new byte[1024]);
         router.setTarget("target", (t, b, o, l) ->
         {
@@ -205,9 +230,9 @@ public class ServerStreamBM
                                                  reply.offset(), reply.sizeof(),
                                                  (t2, b2, o2, l2) -> {});
                 stream.accept(reply.typeId(), reply.buffer(), reply.offset(), reply.sizeof());
+                streams.put(1L, stream);
             }
         });
-
         MutableDirectBuffer buffer = new UnsafeBuffer(new byte[256]);
         BeginFW begin = new BeginFW.Builder().wrap(buffer, 0, buffer.capacity())
                                              .streamId(1L)
@@ -226,7 +251,6 @@ public class ServerStreamBM
         streamFactory.newStream(begin.typeId(), begin.buffer(), begin.offset(), begin.sizeof(), throttle)
                      .accept(begin.typeId(), begin.buffer(), begin.offset(), begin.sizeof());
         // TOOD: end request stream
-
         DataFW data = new DataFW.Builder().wrap(buffer, 0, buffer.capacity())
                                           .streamId(1L)
                                           .groupId(0L)
@@ -234,12 +258,53 @@ public class ServerStreamBM
                                           .payload(b -> b.set(new byte[128]))
                                           .build();
         this.dataRO = data;
+
+        this.ring = new UnsafeBuffer(ByteBuffer.allocateDirect(1024 * 1024 * 64 + TRAILER_LENGTH));
+        this.reader = new OneToOneRingBuffer(ring);
+        this.writer = new ManyToOneRingBuffer(ring);
+    }
+
+    @Setup(Level.Iteration)
+    public void reset()
+    {
+        ring.setMemory(ring.capacity() - TRAILER_LENGTH, TRAILER_LENGTH, (byte)0);
+        ring.putLongOrdered(0, 0L);
+    }
+
+    private AtomicBuffer ring;
+    private OneToOneRingBuffer reader;
+    private ManyToOneRingBuffer writer;
+
+    @Benchmark
+    @Group("data")
+    public void write(
+        Control control)
+    {
+        while (!control.stopMeasurement &&
+                !writer.write(dataRO.typeId(), dataRO.buffer(), dataRO.offset(), dataRO.sizeof()))
+        {
+            Thread.yield();
+        }
     }
 
     @Benchmark
-    public void onData()
+    @Group("data")
+    public void read()
     {
-        stream.accept(dataRO.typeId(), dataRO.buffer(), dataRO.offset(), dataRO.sizeof());
+        reader.read(readHandler);
+    }
+
+    private final MessageHandler readHandler = this::handleRead;
+    private final FrameFW frameRO = new FrameFW();
+
+    private void handleRead(
+        int msgTypeId,
+        DirectBuffer buffer,
+        int index,
+        int length)
+    {
+        final FrameFW frame = frameRO.wrap(buffer, index, index + length);
+        streams.get(frame.streamId()).accept(msgTypeId, buffer, index, length);
     }
 
     public static void main(
