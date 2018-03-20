@@ -15,10 +15,11 @@
  */
 package org.reaktivity.nukleus.sse.internal.bench;
 
+import static java.nio.ByteBuffer.allocateDirect;
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.agrona.concurrent.ringbuffer.RingBufferDescriptor.TRAILER_LENGTH;
+import static org.reaktivity.nukleus.sse.internal.types.stream.FrameFW.FIELD_OFFSET_TIMESTAMP;
 
-import java.nio.ByteBuffer;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
@@ -144,6 +145,9 @@ public class ServerStreamBM
     public void init()
     {
         this.streams = new Long2ObjectHashMap<>();
+        this.source = new OneToOneRingBuffer(new UnsafeBuffer(allocateDirect(1024 * 1024 * 64 + TRAILER_LENGTH)));
+        this.nukleus = new OneToOneRingBuffer(new UnsafeBuffer(allocateDirect(1024 * 1024 * 64 + TRAILER_LENGTH)));
+        this.target = new OneToOneRingBuffer(new UnsafeBuffer(allocateDirect(1024 * 1024 * 64 + TRAILER_LENGTH)));
 
         Configuration config = new Configuration();
         BufferPool bufferPool = new DefaultBufferPool(0, 0);
@@ -151,9 +155,7 @@ public class ServerStreamBM
         MutableInteger groupId = new MutableInteger();
         MutableInteger streamId = new MutableInteger();
         MutableDirectBuffer writeBuffer = new UnsafeBuffer(new byte[1024]);
-
         Router router = new Router();
-
         StreamFactory streamFactory = new ServerStreamFactoryBuilder(config)
                 .setAccumulatorSupplier(s -> l -> {})
                 .setCounterSupplier(s -> () -> 0)
@@ -174,11 +176,12 @@ public class ServerStreamBM
         MessageConsumer[] throttleRef = new MessageConsumer[1];
         router.setTarget("source", (t, b, o, l) ->
         {
+            ((MutableDirectBuffer) b).putLong(o + FIELD_OFFSET_TIMESTAMP, System.nanoTime());
+            source.write(t, b, o, l);
             if (t == BeginFW.TYPE_ID)
             {
                 MessageConsumer throttle = router.getSource("source");
                 Objects.requireNonNull(throttle);
-
                 BeginFW begin = beginRO.wrap(b, o, l);
                 WindowFW window = windowRW.wrap(sourceBuffer, 0, sourceBuffer.capacity())
                                           .streamId(begin.streamId())
@@ -204,11 +207,12 @@ public class ServerStreamBM
         MutableDirectBuffer targetBuffer = new UnsafeBuffer(new byte[1024]);
         router.setTarget("target", (t, b, o, l) ->
         {
+            ((MutableDirectBuffer) b).putLong(o + FIELD_OFFSET_TIMESTAMP, System.nanoTime());
+            target.write(t, b, o, l);
             if (t == BeginFW.TYPE_ID)
             {
                 MessageConsumer throttle = router.getSource("target");
                 Objects.requireNonNull(throttle);
-
                 BeginFW begin = beginRO.wrap(b, o, l);
                 WindowFW window = windowRW.wrap(targetBuffer, 0, targetBuffer.capacity())
                                           .streamId(begin.streamId())
@@ -257,22 +261,19 @@ public class ServerStreamBM
                                           .payload(b -> b.set(new byte[128]))
                                           .build();
         this.dataRO = data;
-
-        this.ring = new UnsafeBuffer(ByteBuffer.allocateDirect(1024 * 1024 * 64 + TRAILER_LENGTH));
-        this.reader = new OneToOneRingBuffer(ring);
-        this.writer = new OneToOneRingBuffer(ring);
     }
 
     @Setup(Level.Iteration)
     public void reset()
     {
-        ring.setMemory(ring.capacity() - TRAILER_LENGTH, TRAILER_LENGTH, (byte)0);
-        ring.putLongOrdered(0, 0L);
+        AtomicBuffer buffer = nukleus.buffer();
+        buffer.setMemory(buffer.capacity() - TRAILER_LENGTH, TRAILER_LENGTH, (byte)0);
+        buffer.putLongOrdered(0, 0L);
     }
 
-    private AtomicBuffer ring;
-    private OneToOneRingBuffer reader;
-    private OneToOneRingBuffer writer;
+    private OneToOneRingBuffer source;
+    private OneToOneRingBuffer nukleus;
+    private OneToOneRingBuffer target;
 
     @Benchmark
     @Group("data")
@@ -280,7 +281,7 @@ public class ServerStreamBM
         Control control)
     {
         while (!control.stopMeasurement &&
-                !writer.write(dataRO.typeId(), dataRO.buffer(), dataRO.offset(), dataRO.sizeof()))
+                !nukleus.write(dataRO.typeId(), dataRO.buffer(), dataRO.offset(), dataRO.sizeof()))
         {
             Thread.yield();
         }
@@ -290,7 +291,7 @@ public class ServerStreamBM
     @Group("data")
     public void read()
     {
-        reader.read(readHandler);
+        nukleus.read(readHandler);
     }
 
     private final MessageHandler readHandler = this::handleRead;
