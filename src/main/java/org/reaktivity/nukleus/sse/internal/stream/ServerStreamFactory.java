@@ -736,8 +736,8 @@ public final class ServerStreamFactory implements StreamFactory
 
     private void doHttpEnd(
         MessageConsumer stream,
-        long traceId,
-        long streamId)
+        long streamId,
+        long traceId)
     {
         final EndFW end = endRW.wrap(writeBuffer, 0, writeBuffer.capacity())
                                .streamId(streamId)
