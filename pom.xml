@@ -6,7 +6,7 @@
   <modelVersion>4.0.0</modelVersion>
   <groupId>org.reaktivity</groupId>
   <artifactId>nukleus-sse</artifactId>
-  <version>0.18</version>
+  <version>0.19</version>
   <name>SSE Nukleus Implementation</name>
   <description>SSE Nukleus Implementation</description>
   <url>https://github.com/reaktivity/nukleus-sse.java</url>
@@ -50,27 +50,26 @@
     <jmh.profilers.version>0.1.3</jmh.profilers.version>
 
     <k3po.version>3.0.0-alpha-88</k3po.version>
-    <k3po.nukleus.ext.version>0.20</k3po.nukleus.ext.version>
+    <k3po.nukleus.ext.version>0.21</k3po.nukleus.ext.version>
 
     <nukleus.plugin.version>0.26</nukleus.plugin.version>
-    <nukleus.version>0.17</nukleus.version>
+    <nukleus.version>0.18</nukleus.version>
 
     <nukleus.sse.spec.version>0.14</nukleus.sse.spec.version>
-    <reaktor.version>0.39</reaktor.version>
+    <reaktor.version>0.41</reaktor.version>
   </properties>
 
   <dependencies>
     <dependency>
       <groupId>org.reaktivity</groupId>
-      <artifactId>nukleus</artifactId>
-      <version>${nukleus.version}</version>
+      <artifactId>nukleus-sse.spec</artifactId>
+      <version>${nukleus.sse.spec.version}</version>
       <scope>provided</scope>
     </dependency>
     <dependency>
       <groupId>org.reaktivity</groupId>
-      <artifactId>nukleus-sse.spec</artifactId>
-      <version>${nukleus.sse.spec.version}</version>
-      <scope>provided</scope>
+      <artifactId>nukleus</artifactId>
+      <version>${nukleus.version}</version>
     </dependency>
     <dependency>
       <groupId>org.reaktivity</groupId>
@@ -296,7 +295,7 @@
                   implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
                   <mainClass>org.openjdk.jmh.Main</mainClass>
                   <manifestEntries>
-                    <Class-Path>${project.build.directory}/${project.artifactId}-shaded.jar</Class-Path>
+                    <Class-Path>${project.artifactId}-shaded.jar</Class-Path>
                   </manifestEntries>
                 </transformer>
               </transformers>

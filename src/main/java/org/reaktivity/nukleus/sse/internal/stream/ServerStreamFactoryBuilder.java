@@ -48,6 +48,7 @@ public final class ServerStreamFactoryBuilder implements StreamFactoryBuilder
     private RouteManager router;
     private MutableDirectBuffer writeBuffer;
     private LongSupplier supplyStreamId;
+    private LongSupplier supplyTrace;
     private LongSupplier supplyCorrelationId;
 
     private Function<RouteFW, LongSupplier> supplyWriteFrameCounter;
@@ -89,6 +90,14 @@ public final class ServerStreamFactoryBuilder implements StreamFactoryBuilder
         LongSupplier supplyStreamId)
     {
         this.supplyStreamId = supplyStreamId;
+        return this;
+    }
+
+    @Override
+    public StreamFactoryBuilder setTraceSupplier(
+        LongSupplier supplyTrace)
+    {
+        this.supplyTrace = supplyTrace;
         return this;
     }
 
@@ -199,6 +208,7 @@ public final class ServerStreamFactoryBuilder implements StreamFactoryBuilder
                 router,
                 writeBuffer,
                 supplyStreamId,
+                supplyTrace,
                 supplyCorrelationId,
                 correlations,
                 supplyWriteFrameCounter,
