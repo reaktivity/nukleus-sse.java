@@ -97,6 +97,7 @@ public final class ServerStreamFactory implements StreamFactory
     private final RouteManager router;
     private final MutableDirectBuffer writeBuffer;
     private final LongSupplier supplyStreamId;
+    private final LongSupplier supplyTrace;
     private final LongSupplier supplyCorrelationId;
 
     private final Long2ObjectHashMap<ServerHandshake> correlations;
@@ -112,6 +113,7 @@ public final class ServerStreamFactory implements StreamFactory
         RouteManager router,
         MutableDirectBuffer writeBuffer,
         LongSupplier supplyStreamId,
+        LongSupplier supplyTrace,
         LongSupplier supplyCorrelationId,
         Long2ObjectHashMap<ServerHandshake> correlations,
         Function<RouteFW, LongSupplier> supplyWriteFrameCounter,
@@ -122,6 +124,7 @@ public final class ServerStreamFactory implements StreamFactory
         this.router = requireNonNull(router);
         this.writeBuffer = requireNonNull(writeBuffer);
         this.supplyStreamId = requireNonNull(supplyStreamId);
+        this.supplyTrace = requireNonNull(supplyTrace);
         this.supplyCorrelationId = requireNonNull(supplyCorrelationId);
         this.correlations = requireNonNull(correlations);
         this.wrapRoute = this::wrapRoute;
@@ -286,6 +289,7 @@ public final class ServerStreamFactory implements StreamFactory
         private void handleBegin(
             BeginFW begin)
         {
+            final long traceId = begin.trace();
             final String acceptName = begin.source().asString();
             final long acceptRef = begin.sourceRef();
             final long correlationId = begin.correlationId();
@@ -372,7 +376,7 @@ public final class ServerStreamFactory implements StreamFactory
                 correlations.put(newCorrelationId, handshake);
 
                 router.setThrottle(connectName, newConnectId, this::handleThrottle);
-                doSseBegin(connectTarget, newConnectId, connectRef, newCorrelationId, pathInfo, lastEventId);
+                doSseBegin(connectTarget, newConnectId, traceId, connectRef, newCorrelationId, pathInfo, lastEventId);
 
                 this.connectTarget = connectTarget;
                 this.connectId = newConnectId;
@@ -388,14 +392,16 @@ public final class ServerStreamFactory implements StreamFactory
         private void handleEnd(
             EndFW end)
         {
-            doSseEnd(connectTarget, connectId);
+            final long traceId = end.trace();
+            doSseEnd(connectTarget, connectId, traceId);
         }
 
         private void handleAbort(
             AbortFW abort)
         {
+            final long traceId = abort.trace();
             // TODO: SseAbortEx
-            doSseAbort(connectTarget, connectId);
+            doSseAbort(connectTarget, connectId, traceId);
         }
 
         private void handleThrottle(
@@ -555,6 +561,7 @@ public final class ServerStreamFactory implements StreamFactory
         private void handleData(
             DataFW data)
         {
+            final long traceId = data.trace();
             final int dataLength = Math.max(data.length(), 0);
 
             this.readFrameCounter.getAsLong();
@@ -564,7 +571,7 @@ public final class ServerStreamFactory implements StreamFactory
             if (applicationReplyBudget < 0)
             {
                 doReset(applicationReplyThrottle, applicationReplyId);
-                doSseAbort(networkReply, networkReplyId);
+                doSseAbort(networkReply, networkReplyId, supplyTrace.getAsLong());
             }
             else
             {
@@ -585,6 +592,7 @@ public final class ServerStreamFactory implements StreamFactory
                 final int bytesWritten = doHttpData(
                     networkReply,
                     networkReplyId,
+                    traceId,
                     networkReplyPadding,
                     payload,
                     id,
@@ -598,13 +606,15 @@ public final class ServerStreamFactory implements StreamFactory
         private void handleEnd(
             EndFW end)
         {
-            doHttpEnd(networkReply, networkReplyId);
+            final long traceId = end.trace();
+            doHttpEnd(networkReply, networkReplyId, traceId);
         }
 
         private void handleAbort(
             AbortFW abort)
         {
-            doHttpAbort(networkReply, networkReplyId);
+            final long traceId = abort.trace();
+            doHttpAbort(networkReply, networkReplyId, traceId);
         }
 
         private void setHttpResponseHeaders(
@@ -653,7 +663,9 @@ public final class ServerStreamFactory implements StreamFactory
             final int applicationReplyCredit = networkReplyBudget - applicationReplyBudget;
             if (applicationReplyCredit > 0)
             {
-                doWindow(applicationReplyThrottle, applicationReplyId, applicationReplyCredit, applicationReplyPadding, 0);
+                final long traceId = window.trace();
+                doWindow(applicationReplyThrottle, applicationReplyId, traceId,
+                         applicationReplyCredit, applicationReplyPadding, 0);
                 applicationReplyBudget += applicationReplyCredit;
             }
         }
@@ -661,21 +673,22 @@ public final class ServerStreamFactory implements StreamFactory
         private void handleReset(
             ResetFW reset)
         {
-            doReset(applicationReplyThrottle, applicationReplyId);
+            final long traceId = reset.trace();
+            doReset(applicationReplyThrottle, applicationReplyId, traceId);
         }
     }
 
     private void doHttpBegin(
         MessageConsumer stream,
-        long targetId,
-        long targetRef,
+        long streamId,
+        long referenceId,
         long correlationId,
         Consumer<ListFW.Builder<HttpHeaderFW.Builder, HttpHeaderFW>> mutator)
     {
         BeginFW begin = beginRW.wrap(writeBuffer, 0, writeBuffer.capacity())
-                .streamId(targetId)
+                .streamId(streamId)
                 .source("sse")
-                .sourceRef(targetRef)
+                .sourceRef(referenceId)
                 .correlationId(correlationId)
                 .extension(e -> e.set(visitHttpBeginEx(mutator)))
                 .build();
@@ -695,7 +708,8 @@ public final class ServerStreamFactory implements StreamFactory
 
     private int doHttpData(
         MessageConsumer stream,
-        long targetId,
+        long streamId,
+        long traceId,
         int padding,
         OctetsFW eventData,
         DirectBuffer id,
@@ -708,7 +722,8 @@ public final class ServerStreamFactory implements StreamFactory
                 p -> p.set(visitSseEvent(eventData, id, type));
 
         DataFW data = dataRW.wrap(writeBuffer, 0, writeBuffer.capacity())
-            .streamId(targetId)
+            .streamId(streamId)
+            .trace(traceId)
             .groupId(0)
             .padding(padding)
             .payload(payloadMutator)
@@ -721,10 +736,12 @@ public final class ServerStreamFactory implements StreamFactory
 
     private void doHttpEnd(
         MessageConsumer stream,
+        long traceId,
         long streamId)
     {
         final EndFW end = endRW.wrap(writeBuffer, 0, writeBuffer.capacity())
                                .streamId(streamId)
+                               .trace(traceId)
                                .build();
 
         stream.accept(end.typeId(), end.buffer(), end.offset(), end.sizeof());
@@ -732,10 +749,12 @@ public final class ServerStreamFactory implements StreamFactory
 
     private void doHttpAbort(
         MessageConsumer stream,
-        long streamId)
+        long streamId,
+        long traceId)
     {
         final AbortFW abort = abortRW.wrap(writeBuffer, 0, writeBuffer.capacity())
                                      .streamId(streamId)
+                                     .trace(traceId)
                                      .build();
 
         stream.accept(abort.typeId(), abort.buffer(), abort.offset(), abort.sizeof());
@@ -744,6 +763,7 @@ public final class ServerStreamFactory implements StreamFactory
     private void doSseBegin(
         MessageConsumer stream,
         long streamId,
+        long traceId,
         long streamRef,
         long correlationId,
         String pathInfo,
@@ -751,6 +771,7 @@ public final class ServerStreamFactory implements StreamFactory
     {
         final BeginFW begin = beginRW.wrap(writeBuffer, 0, writeBuffer.capacity())
                                      .streamId(streamId)
+                                     .trace(traceId)
                                      .source("sse")
                                      .sourceRef(streamRef)
                                      .correlationId(correlationId)
@@ -762,11 +783,13 @@ public final class ServerStreamFactory implements StreamFactory
 
     private void doSseAbort(
         MessageConsumer stream,
-        long streamId)
+        long streamId,
+        long traceId)
     {
         // TODO: SseAbortEx
         final AbortFW abort = abortRW.wrap(writeBuffer, 0, writeBuffer.capacity())
                 .streamId(streamId)
+                .trace(traceId)
                 .build();
 
         stream.accept(abort.typeId(), abort.buffer(), abort.offset(), abort.sizeof());
@@ -774,10 +797,12 @@ public final class ServerStreamFactory implements StreamFactory
 
     private void doSseEnd(
         MessageConsumer stream,
-        long streamId)
+        long streamId,
+        long traceId)
     {
         final EndFW end = endRW.wrap(writeBuffer, 0, writeBuffer.capacity())
                                .streamId(streamId)
+                               .trace(traceId)
                                .build();
 
         stream.accept(end.typeId(), end.buffer(), end.offset(), end.sizeof());
@@ -834,12 +859,14 @@ public final class ServerStreamFactory implements StreamFactory
     private void doWindow(
         final MessageConsumer throttle,
         final long throttleId,
+        final long traceId,
         final int credit,
         final int padding,
         final int groupId)
     {
         final WindowFW window = windowRW.wrap(writeBuffer, 0, writeBuffer.capacity())
                 .streamId(throttleId)
+                .trace(traceId)
                 .credit(credit)
                 .padding(padding)
                 .groupId(groupId)
@@ -850,12 +877,21 @@ public final class ServerStreamFactory implements StreamFactory
 
     private void doReset(
         final MessageConsumer throttle,
-        final long throttleId)
+        final long throttleId,
+        final long traceId)
     {
         final ResetFW reset = resetRW.wrap(writeBuffer, 0, writeBuffer.capacity())
                .streamId(throttleId)
+               .trace(traceId)
                .build();
 
         throttle.accept(reset.typeId(), reset.buffer(), reset.offset(), reset.sizeof());
+    }
+
+    private void doReset(
+        final MessageConsumer throttle,
+        final long throttleId)
+    {
+        doReset(throttle, throttleId, supplyTrace.getAsLong());
     }
 }
