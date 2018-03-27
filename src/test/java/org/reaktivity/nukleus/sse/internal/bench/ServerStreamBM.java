@@ -148,12 +148,12 @@ public class ServerStreamBM
         this.source = new OneToOneRingBuffer(new UnsafeBuffer(allocateDirect(1024 * 1024 * 64 + TRAILER_LENGTH)));
         this.nukleus = new OneToOneRingBuffer(new UnsafeBuffer(allocateDirect(1024 * 1024 * 64 + TRAILER_LENGTH)));
         this.target = new OneToOneRingBuffer(new UnsafeBuffer(allocateDirect(1024 * 1024 * 64 + TRAILER_LENGTH)));
-
         Configuration config = new Configuration();
         BufferPool bufferPool = new DefaultBufferPool(0, 0);
         MutableInteger correlationId = new MutableInteger();
         MutableInteger groupId = new MutableInteger();
         MutableInteger streamId = new MutableInteger();
+        MutableInteger traceId = new MutableInteger();
         MutableDirectBuffer writeBuffer = new UnsafeBuffer(new byte[1024]);
         Router router = new Router();
         StreamFactory streamFactory = new ServerStreamFactoryBuilder(config)
@@ -166,6 +166,7 @@ public class ServerStreamBM
                 .setGroupIdSupplier(() -> ++groupId.value)
                 .setRouteManager(router)
                 .setStreamIdSupplier(() -> ++streamId.value)
+                .setTraceSupplier(() -> ++traceId.value)
                 .setWriteBuffer(writeBuffer)
                 .build();
         BeginFW beginRO = new BeginFW();
