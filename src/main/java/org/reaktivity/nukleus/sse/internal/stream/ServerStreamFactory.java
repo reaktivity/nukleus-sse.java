@@ -665,7 +665,7 @@ public final class ServerStreamFactory implements StreamFactory
             {
                 final long traceId = window.trace();
                 doWindow(applicationReplyThrottle, applicationReplyId, traceId,
-                         applicationReplyCredit, applicationReplyPadding, 0);
+                         applicationReplyCredit, applicationReplyPadding, window.groupId());
                 applicationReplyBudget += applicationReplyCredit;
             }
         }
@@ -862,7 +862,7 @@ public final class ServerStreamFactory implements StreamFactory
         final long traceId,
         final int credit,
         final int padding,
-        final int groupId)
+        final long groupId)
     {
         final WindowFW window = windowRW.wrap(writeBuffer, 0, writeBuffer.capacity())
                 .streamId(throttleId)
