@@ -108,6 +108,13 @@ public class ServerStreamBM
         }
 
         @Override
+        public void forEach(
+            MessageConsumer consumer)
+        {
+            // no-op
+        }
+
+        @Override
         public MessageConsumer supplyTarget(
             String targetName)
         {
