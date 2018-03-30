@@ -18,6 +18,7 @@ package org.reaktivity.nukleus.sse.internal.test.counters;
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.junit.rules.RuleChain.outerRule;
 
+import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.DisableOnDebug;
@@ -25,11 +26,8 @@ import org.junit.rules.TestRule;
 import org.junit.rules.Timeout;
 import org.kaazing.k3po.junit.annotation.Specification;
 import org.kaazing.k3po.junit.rules.K3poRule;
-import org.reaktivity.nukleus.sse.internal.SseController;
 import org.reaktivity.nukleus.sse.internal.test.SseCountersRule;
 import org.reaktivity.reaktor.test.ReaktorRule;
-
-import org.junit.Assert;
 
 public class FrameAndBytesCounterIT
 {
@@ -42,7 +40,7 @@ public class FrameAndBytesCounterIT
 
     private final ReaktorRule reaktor = new ReaktorRule()
         .directory("target/nukleus-itests")
-        .controller(SseController.class::isAssignableFrom)
+        .controller("sse"::equals)
         .commandBufferCapacity(1024)
         .responseBufferCapacity(1024)
         .counterValuesBufferCapacity(1024)
