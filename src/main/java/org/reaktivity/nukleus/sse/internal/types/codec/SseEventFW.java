@@ -37,7 +37,6 @@ public final class SseEventFW extends Flyweight
 
     private static final byte EVENT_TRAILER = 0x0a;
     private static final int EVENT_TRAILER_LENGTH = 1;
-    private static final int TIMESTAMP_FIELD_HEADER_MAX_LENGTH = 18;
 
     private static final int ASCII_LC_A_MINUS_10 = 'a' - 10;
     private static final int ASCII_0 = '0';
@@ -80,11 +79,13 @@ public final class SseEventFW extends Flyweight
     @Override
     public String toString()
     {
-        return String.format("[TODO]");
+        return buffer().getStringWithoutLengthUtf8(offset(), sizeof());
     }
 
     public static final class Builder extends Flyweight.Builder<SseEventFW>
     {
+
+        private int flags;
 
         public Builder()
         {
@@ -92,17 +93,28 @@ public final class SseEventFW extends Flyweight
         }
 
         @Override
-        public Builder wrap(MutableDirectBuffer buffer, int offset, int maxLimit)
+        public Builder wrap(
+            MutableDirectBuffer buffer,
+            int offset,
+            int maxLimit)
         {
             super.wrap(buffer, offset, maxLimit);
+            flags = 0;
+            return this;
+        }
 
-            checkLimit(limit() +
-                       EVENT_TRAILER_LENGTH,
-                       maxLimit);
+        public Builder flags(
+            int flags)
+        {
+            if ((flags & 0x01) != 0x00) // FIN
+            {
+                checkLimit(limit() + EVENT_TRAILER_LENGTH, maxLimit());
 
-            buffer().putByte(limit(), EVENT_TRAILER);
-            limit(limit() + EVENT_TRAILER_LENGTH);
+                buffer().putByte(limit(), EVENT_TRAILER);
+                limit(limit() + EVENT_TRAILER_LENGTH);
+            }
 
+            this.flags = flags;
             return this;
         }
 
@@ -111,27 +123,37 @@ public final class SseEventFW extends Flyweight
         {
             if (data != null)
             {
-                checkLimit(limit() +
-                           DATA_FIELD_HEADER.length +
-                           data.sizeof() +
-                           FIELD_TRAILER_LENGTH,
-                           maxLimit());
-
-                limit(limit() - EVENT_TRAILER_LENGTH);
-
                 final MutableDirectBuffer buffer = buffer();
 
-                buffer.putBytes(limit(), DATA_FIELD_HEADER);
-                limit(limit() + DATA_FIELD_HEADER.length);
+                int trailerSize = 0;
+                if ((flags & 0x01) != 0x00) // FIN
+                {
+                    trailerSize = EVENT_TRAILER_LENGTH;
+                    limit(limit() - EVENT_TRAILER_LENGTH);
+                }
 
+                if ((flags & 0x02) != 0x00) // INIT
+                {
+                    checkLimit(limit() + trailerSize + DATA_FIELD_HEADER.length, maxLimit());
+                    buffer.putBytes(limit(), DATA_FIELD_HEADER);
+                    limit(limit() + DATA_FIELD_HEADER.length);
+
+                    flags &= ~0x02; // ~INIT
+                }
+
+                checkLimit(limit() + trailerSize + data.sizeof(), maxLimit());
                 buffer.putBytes(limit(), data.buffer(), data.offset(), data.sizeof());
                 limit(limit() + data.sizeof());
 
-                buffer.putByte(limit(), FIELD_TRAILER);
-                limit(limit() + FIELD_TRAILER_LENGTH);
+                if ((flags & 0x01) != 0x00) // FIN
+                {
+                    checkLimit(limit() + trailerSize + FIELD_TRAILER_LENGTH, maxLimit());
+                    buffer.putByte(limit(), FIELD_TRAILER);
+                    limit(limit() + FIELD_TRAILER_LENGTH);
 
-                buffer.putByte(limit(), EVENT_TRAILER);
-                limit(limit() + EVENT_TRAILER_LENGTH);
+                    buffer.putByte(limit(), EVENT_TRAILER);
+                    limit(limit() + EVENT_TRAILER_LENGTH);
+                }
             }
 
             return this;
@@ -142,13 +164,18 @@ public final class SseEventFW extends Flyweight
         {
             if (id != null)
             {
+                assert (flags & 0x02) != 0x00; // INIT
+
                 checkLimit(limit() +
                            ID_FIELD_HEADER.length +
                            id.capacity() +
                            FIELD_TRAILER_LENGTH,
                            maxLimit());
 
-                limit(limit() - EVENT_TRAILER_LENGTH);
+                if ((flags & 0x01) != 0x00) // FIN
+                {
+                    limit(limit() - EVENT_TRAILER_LENGTH);
+                }
 
                 buffer().putBytes(limit(), ID_FIELD_HEADER);
                 limit(limit() + ID_FIELD_HEADER.length);
@@ -159,40 +186,56 @@ public final class SseEventFW extends Flyweight
                 buffer().putByte(limit(), FIELD_TRAILER);
                 limit(limit() + FIELD_TRAILER_LENGTH);
 
-                buffer().putByte(limit(), EVENT_TRAILER);
-                limit(limit() + EVENT_TRAILER_LENGTH);
+                if ((flags & 0x01) != 0x00) // FIN
+                {
+                    buffer().putByte(limit(), EVENT_TRAILER);
+                    limit(limit() + EVENT_TRAILER_LENGTH);
+                }
             }
 
             return this;
         }
 
-        public Builder timestamp(long timestamp)
+        public Builder timestamp(
+            long timestamp)
         {
-            final int timestampSize = Math.max(((Long.SIZE - numberOfLeadingZeros(timestamp) + (3)) / 4), 1);
+            if (timestamp > 0L)
+            {
+                assert (flags & 0x02) != 0x00; // INIT
 
-            checkLimit(limit() +
-                    TIMESTAMP_FIELD_HEADER.length +
-                    TIMESTAMP_HEX_PREFIX.length +
-                    timestampSize +
-                    FIELD_TRAILER_LENGTH,
-                    maxLimit());
+                final int timestampSize = Math.max(((Long.SIZE - numberOfLeadingZeros(timestamp) + (3)) / 4), 1);
 
-            limit(limit() - EVENT_TRAILER_LENGTH);
+                checkLimit(limit() +
+                        TIMESTAMP_FIELD_HEADER.length +
+                        TIMESTAMP_HEX_PREFIX.length +
+                        timestampSize +
+                        FIELD_TRAILER_LENGTH,
+                        maxLimit());
 
-            buffer().putBytes(limit(), TIMESTAMP_FIELD_HEADER);
-            limit(limit() + TIMESTAMP_FIELD_HEADER.length);
+                if ((flags & 0x01) != 0x00) // FIN
+                {
+                    limit(limit() - EVENT_TRAILER_LENGTH);
+                }
 
-            buffer().putBytes(limit(), TIMESTAMP_HEX_PREFIX);
-            limit(limit() + TIMESTAMP_HEX_PREFIX.length);
+                buffer().putBytes(limit(), TIMESTAMP_FIELD_HEADER);
+                limit(limit() + TIMESTAMP_FIELD_HEADER.length);
 
-            final int bytesAdded = putHexLong(timestamp, buffer(), limit());
-            limit(limit() + bytesAdded);
+                buffer().putBytes(limit(), TIMESTAMP_HEX_PREFIX);
+                limit(limit() + TIMESTAMP_HEX_PREFIX.length);
 
-            buffer().putByte(limit(), FIELD_TRAILER);
-            limit(limit() + FIELD_TRAILER_LENGTH);
+                final int bytesAdded = putHexLong(timestamp, buffer(), limit());
+                limit(limit() + bytesAdded);
 
-            buffer().putByte(limit(), EVENT_TRAILER);
-            limit(limit() + EVENT_TRAILER_LENGTH);
+                buffer().putByte(limit(), FIELD_TRAILER);
+                limit(limit() + FIELD_TRAILER_LENGTH);
+
+                if ((flags & 0x01) != 0x00) // FIN
+                {
+                    buffer().putByte(limit(), EVENT_TRAILER);
+                    limit(limit() + EVENT_TRAILER_LENGTH);
+                }
+            }
+
             return this;
         }
 
@@ -201,13 +244,18 @@ public final class SseEventFW extends Flyweight
         {
             if (type != null)
             {
+                assert (flags & 0x02) != 0x00; // INIT
+
                 checkLimit(limit() +
                            TYPE_FIELD_HEADER.length +
                            type.capacity() +
                            FIELD_TRAILER_LENGTH,
                            maxLimit());
 
-                limit(limit() - EVENT_TRAILER_LENGTH);
+                if ((flags & 0x01) != 0x00) // FIN
+                {
+                    limit(limit() - EVENT_TRAILER_LENGTH);
+                }
 
                 buffer().putBytes(limit(), TYPE_FIELD_HEADER);
                 limit(limit() + TYPE_FIELD_HEADER.length);
@@ -218,8 +266,11 @@ public final class SseEventFW extends Flyweight
                 buffer().putByte(limit(), FIELD_TRAILER);
                 limit(limit() + FIELD_TRAILER_LENGTH);
 
-                buffer().putByte(limit(), EVENT_TRAILER);
-                limit(limit() + EVENT_TRAILER_LENGTH);
+                if ((flags & 0x01) != 0x00) // FIN
+                {
+                    buffer().putByte(limit(), EVENT_TRAILER);
+                    limit(limit() + EVENT_TRAILER_LENGTH);
+                }
             }
 
             return this;

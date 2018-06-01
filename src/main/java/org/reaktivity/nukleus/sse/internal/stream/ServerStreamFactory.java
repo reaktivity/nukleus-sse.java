@@ -58,7 +58,7 @@ public final class ServerStreamFactory implements StreamFactory
     private static final Pattern QUERY_PARAMS_PATTERN = Pattern.compile("(?<path>[^?]*)(?<query>[\\?].*)");
     private static final Pattern LAST_EVENT_ID_PATTERN = Pattern.compile("(\\?|&)lastEventId=(?<lastEventId>[^&]*)(&|$)");
 
-    private static final int MAXIMUM_HEADER_SIZE =
+    public static final int MAXIMUM_HEADER_SIZE =
             5 +         // data:
             3 +         // id:
             255 +       // id string
@@ -575,30 +575,36 @@ public final class ServerStreamFactory implements StreamFactory
             }
             else
             {
+                final int flags = data.flags();
                 final OctetsFW payload = data.payload();
                 final OctetsFW extension = data.extension();
 
                 DirectBuffer id = null;
                 DirectBuffer type = null;
-                long timestamp = 0;
+                long timestamp = 0L;
                 if (extension.sizeof() > 0)
                 {
                     final SseDataExFW sseDataEx = extension.get(sseDataExRO::wrap);
                     id = sseDataEx.id().value();
                     type = sseDataEx.type().value();
-                    timestamp = sseDataEx.timestamp();
+
+                    if (timestampRequested)
+                    {
+                        timestamp = sseDataEx.timestamp();
+                    }
                 }
 
                 final int bytesWritten = doHttpData(
                     networkReply,
                     networkReplyId,
                     traceId,
+                    flags,
                     networkReplyPadding,
                     payload,
                     id,
                     type,
-                    timestampRequested,
                     timestamp);
+
                 networkReplyBudget -= bytesWritten + networkReplyPadding;
             }
         }
@@ -710,28 +716,27 @@ public final class ServerStreamFactory implements StreamFactory
         MessageConsumer stream,
         long streamId,
         long traceId,
+        int flags,
         int padding,
-        OctetsFW eventData,
+        OctetsFW data,
         DirectBuffer id,
         DirectBuffer type,
-        boolean timestampRequested,
         long timestamp)
     {
-        final Consumer<Builder> payloadMutator = timestampRequested ?
-                p -> p.set(visitSseEvent(eventData, id, type, timestamp)):
-                p -> p.set(visitSseEvent(eventData, id, type));
+        final Consumer<Builder> payloadMutator = p -> p.set(visitSseEvent(flags, data, id, type, timestamp));
 
-        DataFW data = dataRW.wrap(writeBuffer, 0, writeBuffer.capacity())
+        DataFW frame = dataRW.wrap(writeBuffer, 0, writeBuffer.capacity())
             .streamId(streamId)
             .trace(traceId)
+            .flags(flags)
             .groupId(0)
             .padding(padding)
             .payload(payloadMutator)
             .build();
 
-        stream.accept(data.typeId(), data.buffer(), data.offset(), data.sizeof());
+        stream.accept(frame.typeId(), frame.buffer(), frame.offset(), frame.sizeof());
 
-        return data.length();
+        return frame.length();
     }
 
     private void doHttpEnd(
@@ -821,23 +826,7 @@ public final class ServerStreamFactory implements StreamFactory
     }
 
     private Flyweight.Builder.Visitor visitSseEvent(
-        OctetsFW data,
-        DirectBuffer id,
-        DirectBuffer type)
-    {
-        // TODO: verify valid UTF-8 and no LF chars in payload
-        //       would require multiple "data:" lines in event
-
-        return (buffer, offset, limit) ->
-            sseEventRW.wrap(buffer, offset, limit)
-                      .data(data)
-                      .id(id)
-                      .type(type)
-                      .build()
-                      .sizeof();
-    }
-
-    private Flyweight.Builder.Visitor visitSseEvent(
+        int flags,
         OctetsFW data,
         DirectBuffer id,
         DirectBuffer type,
@@ -848,10 +837,11 @@ public final class ServerStreamFactory implements StreamFactory
 
         return (buffer, offset, limit) ->
             sseEventRW.wrap(buffer, offset, limit)
-                      .data(data)
+                      .flags(flags)
                       .timestamp(timestamp)
                       .id(id)
                       .type(type)
+                      .data(data)
                       .build()
                       .sizeof();
     }
