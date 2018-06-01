@@ -17,12 +17,14 @@ package org.reaktivity.nukleus.sse.internal.streams.server;
 
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.junit.rules.RuleChain.outerRule;
+import static org.reaktivity.nukleus.sse.internal.stream.ServerStreamFactory.MAXIMUM_HEADER_SIZE;
 
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.DisableOnDebug;
 import org.junit.rules.TestRule;
 import org.junit.rules.Timeout;
+import org.kaazing.k3po.junit.annotation.ScriptProperty;
 import org.kaazing.k3po.junit.annotation.Specification;
 import org.kaazing.k3po.junit.rules.K3poRule;
 import org.reaktivity.reaktor.test.ReaktorRule;
@@ -63,6 +65,17 @@ public class TypeIT
         "${client}/non.empty/request",
         "${server}/non.empty/response" })
     public void shouldReceiveNonEmptyType() throws Exception
+    {
+        k3po.finish();
+    }
+
+    @Test
+    @Specification({
+        "${route}/server/controller",
+        "${client}/fragmented/request",
+        "${server}/fragmented/response" })
+    @ScriptProperty("padding " + MAXIMUM_HEADER_SIZE)
+    public void shouldReceiveNonEmptyTypeWithFragmentedMessage() throws Exception
     {
         k3po.finish();
     }
