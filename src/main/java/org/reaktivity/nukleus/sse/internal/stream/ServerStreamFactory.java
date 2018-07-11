@@ -15,8 +15,12 @@
  */
 package org.reaktivity.nukleus.sse.internal.stream;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Objects.requireNonNull;
+import static org.agrona.LangUtil.rethrowUnchecked;
 
+import java.io.UnsupportedEncodingException;
+import java.net.URLDecoder;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.function.Consumer;
@@ -324,7 +328,7 @@ public final class ServerStreamFactory implements StreamFactory
                     {
                         if (lastEventId == null)
                         {
-                            lastEventId = matcher.group("lastEventId");
+                            lastEventId = decodeLastEventId(matcher.group("lastEventId"));
                         }
 
                         String replacement = matcher.group(3).isEmpty() ? "$3" : "$1";
@@ -883,5 +887,24 @@ public final class ServerStreamFactory implements StreamFactory
         final long throttleId)
     {
         doReset(throttle, throttleId, supplyTrace.getAsLong());
+    }
+
+    private static String decodeLastEventId(
+        String lastEventId)
+    {
+        if (lastEventId != null && lastEventId.indexOf('%') != -1)
+        {
+            try
+            {
+                lastEventId = URLDecoder.decode(lastEventId, UTF_8.toString());
+            }
+            catch (UnsupportedEncodingException ex)
+            {
+                // unexpected, UTF-8 is a supported character set
+                rethrowUnchecked(ex);
+            }
+        }
+
+        return lastEventId;
     }
 }

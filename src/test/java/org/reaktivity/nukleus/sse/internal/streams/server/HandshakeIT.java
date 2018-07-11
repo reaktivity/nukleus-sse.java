@@ -52,7 +52,27 @@ public class HandshakeIT
         "${route}/server/controller",
         "${client}/request.header.last.event.id/request",
         "${server}/last.event.id/response" })
-    public void shouldHandshakeWithLastEventId() throws Exception
+    public void shouldHandshakeWithRequestHeaderLastEventId() throws Exception
+    {
+        k3po.finish();
+    }
+
+    @Test
+    @Specification({
+        "${route}/server/controller",
+        "${client}/request.parameter.last.event.id/request",
+        "${server}/last.event.id/response" })
+    public void shouldHandshakeWithRequestParameterLastEventId() throws Exception
+    {
+        k3po.finish();
+    }
+
+    @Test
+    @Specification({
+        "${route}/server/controller",
+        "${client}/request.parameter.last.event.id.url.encoded/request",
+        "${server}/last.event.id/response" })
+    public void shouldHandshakeWithURLEncodedRequestParameterLastEventId() throws Exception
     {
         k3po.finish();
     }
