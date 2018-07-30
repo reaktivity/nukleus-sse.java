@@ -167,7 +167,7 @@ public class ServerStreamBM
                 .setAccumulatorSupplier(s -> l -> {})
                 .setCounterSupplier(s -> () -> 0)
                 .setBufferPoolSupplier(() -> bufferPool)
-                .setCorrelationIdSupplier(() -> ++correlationId.value)
+                .setTargetCorrelationIdSupplier(() -> ++correlationId.value)
                 .setGroupBudgetClaimer(g -> c -> c)
                 .setGroupBudgetReleaser(g -> c -> c)
                 .setGroupIdSupplier(() -> ++groupId.value)
