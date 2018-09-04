@@ -666,7 +666,7 @@ public final class ServerStreamFactory implements StreamFactory
                 }
                 else
                 {
-                    // TODO: Allocate a buffer slot instead of using stack
+                    // Rare condition where there is insufficient window to write id: last_event_id\n\n
                     throttleState = this::throttleAfterEndRequested;
                     lastHttpDataFrameBeforeEnd = new UnsafeBuffer(ByteBuffer.allocate(frame.sizeof()));
                     lastHttpDataFrameBeforeEnd.putBytes(0, frame.buffer(), frame.offset(), frame.sizeof());
