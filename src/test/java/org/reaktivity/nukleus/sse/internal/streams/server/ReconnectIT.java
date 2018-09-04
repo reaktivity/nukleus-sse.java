@@ -50,9 +50,29 @@ public class ReconnectIT
     @Test
     @Specification({
         "${route}/server/controller",
+        "${client}/request.header.last.event.id.and.data/request",
+        "${server}/last.event.id.data/response" })
+    public void shouldReconnectWithLastEventIdOnData() throws Exception
+    {
+        k3po.finish();
+    }
+
+    @Test
+    @Specification({
+        "${route}/server/controller",
         "${client}/request.header.last.event.id/request",
-        "${server}/last.event.id/response" })
-    public void shouldReconnectWithLastEventId() throws Exception
+        "${server}/last.event.id.end/response" })
+    public void shouldReconnectWithLastEventIdOnEnd() throws Exception
+    {
+        k3po.finish();
+    }
+
+    @Test
+    @Specification({
+        "${route}/server/controller",
+        "${client}/request.header.last.event.id.fragmented/request",
+        "${server}/last.event.id.end.fragmented/response" })
+    public void shouldReconnectWithLastEventIdOnEndFragmented() throws Exception
     {
         k3po.finish();
     }
