@@ -2,6 +2,11 @@ dist: trusty
 language: java
 before_install:
   - rm ~/.m2/settings.xml
+  - git clone https://github.com/cmebarrow/nukleus-sse.spec
+  - cd nukleus-sse.spec
+  - git checkout end_with_extension
+  - mvn clean install -DskipTests
+  - cd ..
 jdk:
   - oraclejdk9
 install: mvn -v
