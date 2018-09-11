@@ -18,12 +18,12 @@ package org.reaktivity.nukleus.sse.internal.stream;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Objects.requireNonNull;
 import static org.agrona.LangUtil.rethrowUnchecked;
+import static org.reaktivity.nukleus.buffer.BufferPool.NO_SLOT;
 import static org.reaktivity.nukleus.sse.internal.util.Flags.FIN;
 import static org.reaktivity.nukleus.sse.internal.util.Flags.INIT;
 
 import java.io.UnsupportedEncodingException;
 import java.net.URLDecoder;
-import java.nio.ByteBuffer;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.function.Consumer;
@@ -36,8 +36,8 @@ import java.util.regex.Pattern;
 import org.agrona.DirectBuffer;
 import org.agrona.MutableDirectBuffer;
 import org.agrona.collections.Long2ObjectHashMap;
-import org.agrona.concurrent.UnsafeBuffer;
 import org.reaktivity.nukleus.Configuration;
+import org.reaktivity.nukleus.buffer.BufferPool;
 import org.reaktivity.nukleus.function.MessageConsumer;
 import org.reaktivity.nukleus.function.MessageFunction;
 import org.reaktivity.nukleus.function.MessagePredicate;
@@ -106,6 +106,7 @@ public final class ServerStreamFactory implements StreamFactory
 
     private final RouteManager router;
     private final MutableDirectBuffer writeBuffer;
+    private final BufferPool bufferPool;
     private final LongSupplier supplyStreamId;
     private final LongSupplier supplyTrace;
     private final LongSupplier supplyCorrelationId;
@@ -122,6 +123,7 @@ public final class ServerStreamFactory implements StreamFactory
         Configuration config,
         RouteManager router,
         MutableDirectBuffer writeBuffer,
+        BufferPool bufferPool,
         LongSupplier supplyStreamId,
         LongSupplier supplyTrace,
         LongSupplier supplyCorrelationId,
@@ -133,6 +135,7 @@ public final class ServerStreamFactory implements StreamFactory
     {
         this.router = requireNonNull(router);
         this.writeBuffer = requireNonNull(writeBuffer);
+        this.bufferPool = requireNonNull(bufferPool);
         this.supplyStreamId = requireNonNull(supplyStreamId);
         this.supplyTrace = requireNonNull(supplyTrace);
         this.supplyCorrelationId = requireNonNull(supplyCorrelationId);
@@ -446,9 +449,10 @@ public final class ServerStreamFactory implements StreamFactory
 
         private MessageConsumer networkReply;
         private long networkReplyId;
+        private int networkSlot = NO_SLOT;
+        int networkSlotOffset;
 
         private MessageConsumer streamState;
-        private MessageConsumer throttleState;
 
         private int networkReplyBudget;
         private int networkReplyPadding;
@@ -457,7 +461,6 @@ public final class ServerStreamFactory implements StreamFactory
         private LongConsumer readBytesAccumulator;
         private LongSupplier readFrameCounter;
         private boolean timestampRequested;
-        private MutableDirectBuffer lastHttpDataFrameBeforeEnd;
 
         private ServerConnectReplyStream(
             MessageConsumer applicationReplyThrottle,
@@ -466,7 +469,6 @@ public final class ServerStreamFactory implements StreamFactory
             this.applicationReplyThrottle = applicationReplyThrottle;
             this.applicationReplyId = applicationReplyId;
             this.streamState = this::beforeBegin;
-            this.throttleState = this::throttleBeforeEnd;
         }
 
         private void handleStream(
@@ -515,20 +517,6 @@ public final class ServerStreamFactory implements StreamFactory
                 final AbortFW abort = abortRO.wrap(buffer, index, index + length);
                 handleAbort(abort);
                 break;
-            default:
-                doReset(applicationReplyThrottle, applicationReplyId);
-                break;
-            }
-        }
-
-        private void afterEnd(
-            int msgTypeId,
-            DirectBuffer buffer,
-            int index,
-            int length)
-        {
-            switch (msgTypeId)
-            {
             default:
                 doReset(applicationReplyThrottle, applicationReplyId);
                 break;
@@ -645,7 +633,7 @@ public final class ServerStreamFactory implements StreamFactory
             if (extension.sizeof() > 0)
             {
                 final SseEndExFW sseEndEx = extension.get(sseEndExRO::wrap);
-                final DirectBuffer id = sseEndEx.lastEventId().value();
+                final DirectBuffer id = sseEndEx.id().value();
 
                 int flags = FIN | INIT;
                 final Consumer<Builder> payloadMutator = p -> p.set(visitSseEvent(flags, null, id, null, -1L));
@@ -667,16 +655,16 @@ public final class ServerStreamFactory implements StreamFactory
                 else
                 {
                     // Rare condition where there is insufficient window to write id: last_event_id\n\n
-                    throttleState = this::throttleAfterEndRequested;
-                    lastHttpDataFrameBeforeEnd = new UnsafeBuffer(ByteBuffer.allocate(frame.sizeof()));
-                    lastHttpDataFrameBeforeEnd.putBytes(0, frame.buffer(), frame.offset(), frame.sizeof());
+                    networkSlot = bufferPool.acquire(networkReplyId);
+                    MutableDirectBuffer buffer = bufferPool.buffer(networkSlot);
+                    buffer.putBytes(0, frame.buffer(), frame.offset(), frame.sizeof());
+                    networkSlotOffset = frame.sizeof();
                 }
             }
             else
             {
                 doHttpEnd(networkReply, networkReplyId, traceId);
             }
-            this.streamState = this::afterEnd;
         }
 
         private void handleAbort(
@@ -700,18 +688,7 @@ public final class ServerStreamFactory implements StreamFactory
             headers.item(h -> h.name("content-type").value("text/event-stream;ext=timestamp"));
         }
 
-
-
         private void handleThrottle(
-            int msgTypeId,
-            DirectBuffer buffer,
-            int index,
-            int length)
-        {
-            throttleState.accept(msgTypeId, buffer, index, length);
-        }
-
-        private void throttleBeforeEnd(
             int msgTypeId,
             DirectBuffer buffer,
             int index,
@@ -739,6 +716,17 @@ public final class ServerStreamFactory implements StreamFactory
             networkReplyBudget += window.credit();
             networkReplyPadding = window.padding();
 
+            if (networkSlot != NO_SLOT && networkReplyBudget >= networkSlotOffset + networkReplyPadding)
+            {
+                MutableDirectBuffer buffer = bufferPool.buffer(networkSlot);
+                DataFW frame = dataRO.wrap(buffer,  0,  networkSlotOffset);
+                networkReply.accept(frame.typeId(), frame.buffer(), frame.offset(), frame.sizeof());
+                doHttpEnd(networkReply, networkReplyId, frame.trace());
+                networkReplyBudget -= frame.sizeof() + networkReplyPadding;
+                bufferPool.release(networkSlot);
+                networkSlot = NO_SLOT;
+            }
+
             int applicationReplyPadding = networkReplyPadding + MAXIMUM_HEADER_SIZE;
             final int applicationReplyCredit = networkReplyBudget - applicationReplyBudget;
             if (applicationReplyCredit > 0)
@@ -755,35 +743,6 @@ public final class ServerStreamFactory implements StreamFactory
         {
             final long traceId = reset.trace();
             doReset(applicationReplyThrottle, applicationReplyId, traceId);
-        }
-
-        private void throttleAfterEndRequested(
-            int msgTypeId,
-            DirectBuffer buffer,
-            int index,
-            int length)
-        {
-            switch (msgTypeId)
-            {
-            case WindowFW.TYPE_ID:
-                final WindowFW window = windowRO.wrap(buffer, index, index + length);
-                networkReplyBudget += window.credit();
-                networkReplyPadding = window.padding();
-                if (networkReplyBudget >= lastHttpDataFrameBeforeEnd.capacity() + networkReplyPadding)
-                {
-                    DataFW frame = dataRO.wrap(lastHttpDataFrameBeforeEnd,  0,  lastHttpDataFrameBeforeEnd.capacity());
-                    networkReply.accept(frame.typeId(), frame.buffer(), frame.offset(), frame.sizeof());
-                    doHttpEnd(networkReply, networkReplyId, frame.trace());
-                }
-                break;
-            case ResetFW.TYPE_ID:
-                final ResetFW reset = resetRO.wrap(buffer, index, index + length);
-                handleReset(reset);
-                break;
-            default:
-                // ignore
-                break;
-            }
         }
     }
 
