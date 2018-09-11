@@ -451,6 +451,7 @@ public final class ServerStreamFactory implements StreamFactory
         private long networkReplyId;
         private int networkSlot = NO_SLOT;
         int networkSlotOffset;
+        boolean deferredEnd;
 
         private MessageConsumer streamState;
 
@@ -659,6 +660,7 @@ public final class ServerStreamFactory implements StreamFactory
                     MutableDirectBuffer buffer = bufferPool.buffer(networkSlot);
                     buffer.putBytes(0, frame.buffer(), frame.offset(), frame.sizeof());
                     networkSlotOffset = frame.sizeof();
+                    deferredEnd = true;
                 }
             }
             else
@@ -721,10 +723,14 @@ public final class ServerStreamFactory implements StreamFactory
                 MutableDirectBuffer buffer = bufferPool.buffer(networkSlot);
                 DataFW frame = dataRO.wrap(buffer,  0,  networkSlotOffset);
                 networkReply.accept(frame.typeId(), frame.buffer(), frame.offset(), frame.sizeof());
-                doHttpEnd(networkReply, networkReplyId, frame.trace());
                 networkReplyBudget -= frame.sizeof() + networkReplyPadding;
                 bufferPool.release(networkSlot);
                 networkSlot = NO_SLOT;
+                if (deferredEnd)
+                {
+                    doHttpEnd(networkReply, networkReplyId, frame.trace());
+                    deferredEnd = false;
+                }
             }
 
             int applicationReplyPadding = networkReplyPadding + MAXIMUM_HEADER_SIZE;
