@@ -18,6 +18,9 @@ package org.reaktivity.nukleus.sse.internal.stream;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Objects.requireNonNull;
 import static org.agrona.LangUtil.rethrowUnchecked;
+import static org.reaktivity.nukleus.buffer.BufferPool.NO_SLOT;
+import static org.reaktivity.nukleus.sse.internal.util.Flags.FIN;
+import static org.reaktivity.nukleus.sse.internal.util.Flags.INIT;
 
 import java.io.UnsupportedEncodingException;
 import java.net.URLDecoder;
@@ -34,6 +37,7 @@ import org.agrona.DirectBuffer;
 import org.agrona.MutableDirectBuffer;
 import org.agrona.collections.Long2ObjectHashMap;
 import org.reaktivity.nukleus.Configuration;
+import org.reaktivity.nukleus.buffer.BufferPool;
 import org.reaktivity.nukleus.function.MessageConsumer;
 import org.reaktivity.nukleus.function.MessageFunction;
 import org.reaktivity.nukleus.function.MessagePredicate;
@@ -54,6 +58,7 @@ import org.reaktivity.nukleus.sse.internal.types.stream.HttpBeginExFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.ResetFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.SseBeginExFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.SseDataExFW;
+import org.reaktivity.nukleus.sse.internal.types.stream.SseEndExFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.WindowFW;
 import org.reaktivity.nukleus.stream.StreamFactory;
 
@@ -95,11 +100,13 @@ public final class ServerStreamFactory implements StreamFactory
     private final HttpBeginExFW.Builder httpBeginExRW = new HttpBeginExFW.Builder();
 
     private final SseDataExFW sseDataExRO = new SseDataExFW();
+    private final SseEndExFW sseEndExRO = new SseEndExFW();
 
     private final SseEventFW.Builder sseEventRW = new SseEventFW.Builder();
 
     private final RouteManager router;
     private final MutableDirectBuffer writeBuffer;
+    private final BufferPool bufferPool;
     private final LongSupplier supplyStreamId;
     private final LongSupplier supplyTrace;
     private final LongSupplier supplyCorrelationId;
@@ -116,6 +123,7 @@ public final class ServerStreamFactory implements StreamFactory
         Configuration config,
         RouteManager router,
         MutableDirectBuffer writeBuffer,
+        BufferPool bufferPool,
         LongSupplier supplyStreamId,
         LongSupplier supplyTrace,
         LongSupplier supplyCorrelationId,
@@ -127,6 +135,7 @@ public final class ServerStreamFactory implements StreamFactory
     {
         this.router = requireNonNull(router);
         this.writeBuffer = requireNonNull(writeBuffer);
+        this.bufferPool = requireNonNull(bufferPool);
         this.supplyStreamId = requireNonNull(supplyStreamId);
         this.supplyTrace = requireNonNull(supplyTrace);
         this.supplyCorrelationId = requireNonNull(supplyCorrelationId);
@@ -440,6 +449,9 @@ public final class ServerStreamFactory implements StreamFactory
 
         private MessageConsumer networkReply;
         private long networkReplyId;
+        private int networkSlot = NO_SLOT;
+        int networkSlotOffset;
+        boolean deferredEnd;
 
         private MessageConsumer streamState;
 
@@ -617,7 +629,44 @@ public final class ServerStreamFactory implements StreamFactory
             EndFW end)
         {
             final long traceId = end.trace();
-            doHttpEnd(networkReply, networkReplyId, traceId);
+            final OctetsFW extension = end.extension();
+
+            if (extension.sizeof() > 0)
+            {
+                final SseEndExFW sseEndEx = extension.get(sseEndExRO::wrap);
+                final DirectBuffer id = sseEndEx.id().value();
+
+                int flags = FIN | INIT;
+                final Consumer<Builder> payloadMutator = p -> p.set(visitSseEvent(flags, null, id, null, -1L));
+
+                DataFW frame = dataRW.wrap(writeBuffer, 0, writeBuffer.capacity())
+                    .streamId(networkReplyId)
+                    .trace(traceId)
+                    .flags(flags)
+                    .groupId(0)
+                    .padding(networkReplyPadding)
+                    .payload(payloadMutator)
+                    .build();
+
+                if (networkReplyBudget >= frame.sizeof() + networkReplyPadding)
+                {
+                    networkReply.accept(frame.typeId(), frame.buffer(), frame.offset(), frame.sizeof());
+                    doHttpEnd(networkReply, networkReplyId, traceId);
+                }
+                else
+                {
+                    // Rare condition where there is insufficient window to write id: last_event_id\n\n
+                    networkSlot = bufferPool.acquire(networkReplyId);
+                    MutableDirectBuffer buffer = bufferPool.buffer(networkSlot);
+                    buffer.putBytes(0, frame.buffer(), frame.offset(), frame.sizeof());
+                    networkSlotOffset = frame.sizeof();
+                    deferredEnd = true;
+                }
+            }
+            else
+            {
+                doHttpEnd(networkReply, networkReplyId, traceId);
+            }
         }
 
         private void handleAbort(
@@ -668,6 +717,21 @@ public final class ServerStreamFactory implements StreamFactory
         {
             networkReplyBudget += window.credit();
             networkReplyPadding = window.padding();
+
+            if (networkSlot != NO_SLOT && networkReplyBudget >= networkSlotOffset + networkReplyPadding)
+            {
+                MutableDirectBuffer buffer = bufferPool.buffer(networkSlot);
+                DataFW frame = dataRO.wrap(buffer,  0,  networkSlotOffset);
+                networkReply.accept(frame.typeId(), frame.buffer(), frame.offset(), frame.sizeof());
+                networkReplyBudget -= frame.sizeof() + networkReplyPadding;
+                bufferPool.release(networkSlot);
+                networkSlot = NO_SLOT;
+                if (deferredEnd)
+                {
+                    doHttpEnd(networkReply, networkReplyId, frame.trace());
+                    deferredEnd = false;
+                }
+            }
 
             int applicationReplyPadding = networkReplyPadding + MAXIMUM_HEADER_SIZE;
             final int applicationReplyCredit = networkReplyBudget - applicationReplyBudget;
