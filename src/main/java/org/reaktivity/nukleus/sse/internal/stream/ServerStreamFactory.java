@@ -739,6 +739,9 @@ public final class ServerStreamFactory implements StreamFactory
                 networkReplyBudget -= bytesWritten + networkReplyPadding;
                 assert networkReplyBudget >= 0;
                 commentWritten = true;
+                // Not sending WINDOW to application side as group budget expects full initial window first time
+                // Next WINDOW makes it full window and it goes as first WINDOW to application side
+                return;
             }
 
             if (networkSlot != NO_SLOT && networkReplyBudget >= networkSlotOffset + networkReplyPadding)
