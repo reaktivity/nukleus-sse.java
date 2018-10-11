@@ -926,7 +926,7 @@ public final class ServerStreamFactory implements StreamFactory
         DirectBuffer id,
         DirectBuffer type,
         long timestamp,
-        boolean comment)
+        boolean enabled)
     {
         // TODO: verify valid UTF-8 and no LF chars in payload
         //       would require multiple "data:" lines in event
@@ -938,7 +938,7 @@ public final class ServerStreamFactory implements StreamFactory
                       .id(id)
                       .type(type)
                       .data(data)
-                      .comment(comment)
+                      .comment(enabled)
                       .build()
                       .sizeof();
     }

@@ -280,9 +280,9 @@ public final class SseEventFW extends Flyweight
             return this;
         }
 
-        public Builder comment(boolean comment)
+        public Builder comment(boolean enabled)
         {
-            if (comment)
+            if (enabled)
             {
                 assert (flags & 0x02) != 0x00; // INIT
 
