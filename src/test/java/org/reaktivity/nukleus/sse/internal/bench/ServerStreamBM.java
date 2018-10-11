@@ -56,6 +56,7 @@ import org.reaktivity.nukleus.function.MessageConsumer;
 import org.reaktivity.nukleus.function.MessageFunction;
 import org.reaktivity.nukleus.function.MessagePredicate;
 import org.reaktivity.nukleus.route.RouteManager;
+import org.reaktivity.nukleus.sse.internal.SseConfiguration;
 import org.reaktivity.nukleus.sse.internal.stream.ServerStreamFactoryBuilder;
 import org.reaktivity.nukleus.sse.internal.types.control.Role;
 import org.reaktivity.nukleus.sse.internal.types.control.RouteFW;
@@ -155,7 +156,7 @@ public class ServerStreamBM
         this.source = new OneToOneRingBuffer(new UnsafeBuffer(allocateDirect(1024 * 1024 * 64 + TRAILER_LENGTH)));
         this.nukleus = new OneToOneRingBuffer(new UnsafeBuffer(allocateDirect(1024 * 1024 * 64 + TRAILER_LENGTH)));
         this.target = new OneToOneRingBuffer(new UnsafeBuffer(allocateDirect(1024 * 1024 * 64 + TRAILER_LENGTH)));
-        Configuration config = new Configuration();
+        SseConfiguration config = new SseConfiguration(new Configuration());
         BufferPool bufferPool = new DefaultBufferPool(0, 0);
         MutableInteger correlationId = new MutableInteger();
         MutableInteger groupId = new MutableInteger();

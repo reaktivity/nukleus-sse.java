@@ -25,9 +25,9 @@ import java.util.function.Supplier;
 import org.agrona.DirectBuffer;
 import org.agrona.MutableDirectBuffer;
 import org.agrona.collections.Long2ObjectHashMap;
-import org.reaktivity.nukleus.Configuration;
 import org.reaktivity.nukleus.buffer.BufferPool;
 import org.reaktivity.nukleus.route.RouteManager;
+import org.reaktivity.nukleus.sse.internal.SseConfiguration;
 import org.reaktivity.nukleus.sse.internal.types.control.RouteFW;
 import org.reaktivity.nukleus.sse.internal.types.control.UnrouteFW;
 import org.reaktivity.nukleus.stream.StreamFactory;
@@ -35,7 +35,7 @@ import org.reaktivity.nukleus.stream.StreamFactoryBuilder;
 
 public final class ServerStreamFactoryBuilder implements StreamFactoryBuilder
 {
-    private final Configuration config;
+    private final SseConfiguration config;
     private final Long2ObjectHashMap<ServerHandshake> correlations;
 
     private final UnrouteFW unrouteRO = new UnrouteFW();
@@ -60,7 +60,7 @@ public final class ServerStreamFactoryBuilder implements StreamFactoryBuilder
     private Function<String, LongConsumer> supplyAccumulator;
 
     public ServerStreamFactoryBuilder(
-        Configuration config)
+        SseConfiguration config)
     {
         this.config = config;
         this.correlations = new Long2ObjectHashMap<>();

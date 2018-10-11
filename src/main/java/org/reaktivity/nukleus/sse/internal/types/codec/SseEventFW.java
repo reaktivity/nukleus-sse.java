@@ -29,11 +29,15 @@ public final class SseEventFW extends Flyweight
     private static final byte[] ID_FIELD_HEADER = "id:".getBytes(UTF_8);
     private static final byte[] TIMESTAMP_FIELD_HEADER = "timestamp:".getBytes(UTF_8);
     private static final byte[] TYPE_FIELD_HEADER = "event:".getBytes(UTF_8);
+    private static final byte[] COMMENT_HEADER = ":".getBytes(UTF_8);
 
     private static final byte[] TIMESTAMP_HEX_PREFIX = "0x".getBytes(UTF_8);
 
     private static final byte FIELD_TRAILER = 0x0a;
     private static final int FIELD_TRAILER_LENGTH = 1;
+
+    private static final byte COMMENT_TRAILER = 0x0a;
+    private static final int COMMENT_TRAILER_LENGTH = 1;
 
     private static final byte EVENT_TRAILER = 0x0a;
     private static final int EVENT_TRAILER_LENGTH = 1;
@@ -273,6 +277,37 @@ public final class SseEventFW extends Flyweight
                 }
             }
 
+            return this;
+        }
+
+        public Builder comment(boolean comment)
+        {
+            if (comment)
+            {
+                assert (flags & 0x02) != 0x00; // INIT
+
+                checkLimit(limit() +
+                            COMMENT_HEADER.length +
+                            COMMENT_TRAILER_LENGTH,
+                            maxLimit());
+
+                if ((flags & 0x01) != 0x00) // FIN
+                {
+                    limit(limit() - EVENT_TRAILER_LENGTH);
+                }
+
+                buffer().putBytes(limit(), COMMENT_HEADER);
+                limit(limit() + COMMENT_HEADER.length);
+
+                buffer().putByte(limit(), COMMENT_TRAILER);
+                limit(limit() + COMMENT_TRAILER_LENGTH);
+
+                if ((flags & 0x01) != 0x00) // FIN
+                {
+                    buffer().putByte(limit(), EVENT_TRAILER);
+                    limit(limit() + EVENT_TRAILER_LENGTH);
+                }
+            }
             return this;
         }
 

@@ -36,12 +36,12 @@ import java.util.regex.Pattern;
 import org.agrona.DirectBuffer;
 import org.agrona.MutableDirectBuffer;
 import org.agrona.collections.Long2ObjectHashMap;
-import org.reaktivity.nukleus.Configuration;
 import org.reaktivity.nukleus.buffer.BufferPool;
 import org.reaktivity.nukleus.function.MessageConsumer;
 import org.reaktivity.nukleus.function.MessageFunction;
 import org.reaktivity.nukleus.function.MessagePredicate;
 import org.reaktivity.nukleus.route.RouteManager;
+import org.reaktivity.nukleus.sse.internal.SseConfiguration;
 import org.reaktivity.nukleus.sse.internal.types.Flyweight;
 import org.reaktivity.nukleus.sse.internal.types.HttpHeaderFW;
 import org.reaktivity.nukleus.sse.internal.types.ListFW;
@@ -110,6 +110,7 @@ public final class ServerStreamFactory implements StreamFactory
     private final LongSupplier supplyStreamId;
     private final LongSupplier supplyTrace;
     private final LongSupplier supplyCorrelationId;
+    private final boolean initialComment;
 
     private final Long2ObjectHashMap<ServerHandshake> correlations;
     private final MessageFunction<RouteFW> wrapRoute;
@@ -120,7 +121,7 @@ public final class ServerStreamFactory implements StreamFactory
     private final Function<RouteFW, LongConsumer> supplyReadBytesAccumulator;
 
     public ServerStreamFactory(
-        Configuration config,
+        SseConfiguration config,
         RouteManager router,
         MutableDirectBuffer writeBuffer,
         BufferPool bufferPool,
@@ -145,6 +146,7 @@ public final class ServerStreamFactory implements StreamFactory
         this.supplyReadFrameCounter = supplyReadFrameCounter;
         this.supplyWriteBytesAccumulator = supplyWriteBytesAccumulator;
         this.supplyReadBytesAccumulator = supplyReadBytesAccumulator;
+        this.initialComment = config.initialComment();
     }
 
     @Override
@@ -462,6 +464,7 @@ public final class ServerStreamFactory implements StreamFactory
         private LongConsumer readBytesAccumulator;
         private LongSupplier readFrameCounter;
         private boolean timestampRequested;
+        private boolean commentWritten;
 
         private ServerConnectReplyStream(
             MessageConsumer applicationReplyThrottle,
@@ -619,7 +622,8 @@ public final class ServerStreamFactory implements StreamFactory
                     payload,
                     id,
                     type,
-                    timestamp);
+                    timestamp,
+                    false);
 
                 networkReplyBudget -= bytesWritten + networkReplyPadding;
             }
@@ -637,7 +641,7 @@ public final class ServerStreamFactory implements StreamFactory
                 final DirectBuffer id = sseEndEx.id().value();
 
                 int flags = FIN | INIT;
-                final Consumer<Builder> payloadMutator = p -> p.set(visitSseEvent(flags, null, id, null, -1L));
+                final Consumer<Builder> payloadMutator = p -> p.set(visitSseEvent(flags, null, id, null, -1L, false));
 
                 DataFW frame = dataRW.wrap(writeBuffer, 0, writeBuffer.capacity())
                     .streamId(networkReplyId)
@@ -718,6 +722,25 @@ public final class ServerStreamFactory implements StreamFactory
             networkReplyBudget += window.credit();
             networkReplyPadding = window.padding();
 
+            if (initialComment && !commentWritten)
+            {
+                final int bytesWritten = doHttpData(
+                        networkReply,
+                        networkReplyId,
+                        supplyTrace.getAsLong(),
+                        FIN | INIT,
+                        networkReplyPadding,
+                        null,
+                        null,
+                        null,
+                        0L,
+                        true);
+
+                networkReplyBudget -= bytesWritten + networkReplyPadding;
+                assert networkReplyBudget >= 0;
+                commentWritten = true;
+            }
+
             if (networkSlot != NO_SLOT && networkReplyBudget >= networkSlotOffset + networkReplyPadding)
             {
                 MutableDirectBuffer buffer = bufferPool.buffer(networkSlot);
@@ -789,9 +812,10 @@ public final class ServerStreamFactory implements StreamFactory
         OctetsFW data,
         DirectBuffer id,
         DirectBuffer type,
-        long timestamp)
+        long timestamp,
+        boolean comment)
     {
-        final Consumer<Builder> payloadMutator = p -> p.set(visitSseEvent(flags, data, id, type, timestamp));
+        final Consumer<Builder> payloadMutator = p -> p.set(visitSseEvent(flags, data, id, type, timestamp, comment));
 
         DataFW frame = dataRW.wrap(writeBuffer, 0, writeBuffer.capacity())
             .streamId(streamId)
@@ -898,7 +922,8 @@ public final class ServerStreamFactory implements StreamFactory
         OctetsFW data,
         DirectBuffer id,
         DirectBuffer type,
-        long timestamp)
+        long timestamp,
+        boolean comment)
     {
         // TODO: verify valid UTF-8 and no LF chars in payload
         //       would require multiple "data:" lines in event
@@ -910,6 +935,7 @@ public final class ServerStreamFactory implements StreamFactory
                       .id(id)
                       .type(type)
                       .data(data)
+                      .comment(comment)
                       .build()
                       .sizeof();
     }
