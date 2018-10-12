@@ -36,7 +36,6 @@ import java.util.regex.Pattern;
 import org.agrona.DirectBuffer;
 import org.agrona.MutableDirectBuffer;
 import org.agrona.collections.Long2ObjectHashMap;
-import org.agrona.concurrent.UnsafeBuffer;
 import org.reaktivity.nukleus.buffer.BufferPool;
 import org.reaktivity.nukleus.function.MessageConsumer;
 import org.reaktivity.nukleus.function.MessageFunction;
@@ -735,7 +734,7 @@ public final class ServerStreamFactory implements StreamFactory
                         null,
                         null,
                         0L,
-                        new UnsafeBuffer(new byte[0]));
+                        initialComment);
 
                 networkReplyBudget -= bytesWritten + networkReplyPadding;
                 assert networkReplyBudget >= 0;
