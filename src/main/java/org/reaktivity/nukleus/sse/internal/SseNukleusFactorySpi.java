@@ -25,8 +25,6 @@ import org.reaktivity.nukleus.sse.internal.stream.ServerStreamFactoryBuilder;
 
 public final class SseNukleusFactorySpi implements NukleusFactorySpi
 {
-    private SseConfiguration sseConfig;
-
     @Override
     public String name()
     {
@@ -38,7 +36,7 @@ public final class SseNukleusFactorySpi implements NukleusFactorySpi
         Configuration config,
         NukleusBuilder builder)
     {
-        sseConfig = new SseConfiguration(config);
+        SseConfiguration sseConfig = new SseConfiguration(config);
         ServerStreamFactoryBuilder serverStreamFactoryBuilder = new ServerStreamFactoryBuilder(sseConfig);
         return builder.streamFactory(SERVER, serverStreamFactoryBuilder)
                       .routeHandler(SERVER, serverStreamFactoryBuilder::handleRoute)

@@ -280,9 +280,10 @@ public final class SseEventFW extends Flyweight
             return this;
         }
 
-        public Builder comment(boolean enabled)
+        public Builder comment(
+            DirectBuffer comment)
         {
-            if (enabled)
+            if (comment != null)
             {
                 assert (flags & 0x02) != 0x00; // INIT
 
@@ -298,6 +299,9 @@ public final class SseEventFW extends Flyweight
 
                 buffer().putBytes(limit(), COMMENT_HEADER);
                 limit(limit() + COMMENT_HEADER.length);
+
+                buffer().putBytes(limit(), comment, 0, comment.capacity());
+                limit(limit() + comment.capacity());
 
                 buffer().putByte(limit(), COMMENT_TRAILER);
                 limit(limit() + COMMENT_TRAILER_LENGTH);

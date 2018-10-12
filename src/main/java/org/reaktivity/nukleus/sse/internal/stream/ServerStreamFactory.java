@@ -36,6 +36,7 @@ import java.util.regex.Pattern;
 import org.agrona.DirectBuffer;
 import org.agrona.MutableDirectBuffer;
 import org.agrona.collections.Long2ObjectHashMap;
+import org.agrona.concurrent.UnsafeBuffer;
 import org.reaktivity.nukleus.buffer.BufferPool;
 import org.reaktivity.nukleus.function.MessageConsumer;
 import org.reaktivity.nukleus.function.MessageFunction;
@@ -110,7 +111,7 @@ public final class ServerStreamFactory implements StreamFactory
     private final LongSupplier supplyStreamId;
     private final LongSupplier supplyTrace;
     private final LongSupplier supplyCorrelationId;
-    private final boolean initialComment;
+    private final DirectBuffer initialComment;
 
     private final Long2ObjectHashMap<ServerHandshake> correlations;
     private final MessageFunction<RouteFW> wrapRoute;
@@ -623,7 +624,7 @@ public final class ServerStreamFactory implements StreamFactory
                     id,
                     type,
                     timestamp,
-                    false);
+                    null);
 
                 networkReplyBudget -= bytesWritten + networkReplyPadding;
             }
@@ -641,7 +642,7 @@ public final class ServerStreamFactory implements StreamFactory
                 final DirectBuffer id = sseEndEx.id().value();
 
                 int flags = FIN | INIT;
-                final Consumer<Builder> payloadMutator = p -> p.set(visitSseEvent(flags, null, id, null, -1L, false));
+                final Consumer<Builder> payloadMutator = p -> p.set(visitSseEvent(flags, null, id, null, -1L, null));
 
                 DataFW frame = dataRW.wrap(writeBuffer, 0, writeBuffer.capacity())
                     .streamId(networkReplyId)
@@ -722,7 +723,7 @@ public final class ServerStreamFactory implements StreamFactory
             networkReplyBudget += window.credit();
             networkReplyPadding = window.padding();
 
-            if (initialComment && !commentWritten)
+            if (initialComment != null && !commentWritten)
             {
                 final int bytesWritten = doHttpData(
                         networkReply,
@@ -734,7 +735,7 @@ public final class ServerStreamFactory implements StreamFactory
                         null,
                         null,
                         0L,
-                        true);
+                        new UnsafeBuffer(new byte[0]));
 
                 networkReplyBudget -= bytesWritten + networkReplyPadding;
                 assert networkReplyBudget >= 0;
@@ -816,7 +817,7 @@ public final class ServerStreamFactory implements StreamFactory
         DirectBuffer id,
         DirectBuffer type,
         long timestamp,
-        boolean comment)
+        DirectBuffer comment)
     {
         final Consumer<Builder> payloadMutator = p -> p.set(visitSseEvent(flags, data, id, type, timestamp, comment));
 
@@ -926,7 +927,7 @@ public final class ServerStreamFactory implements StreamFactory
         DirectBuffer id,
         DirectBuffer type,
         long timestamp,
-        boolean enabled)
+        DirectBuffer comment)
     {
         // TODO: verify valid UTF-8 and no LF chars in payload
         //       would require multiple "data:" lines in event
@@ -938,7 +939,7 @@ public final class ServerStreamFactory implements StreamFactory
                       .id(id)
                       .type(type)
                       .data(data)
-                      .comment(enabled)
+                      .comment(comment)
                       .build()
                       .sizeof();
     }

@@ -16,6 +16,8 @@
 
 package org.reaktivity.nukleus.sse.internal;
 
+import org.agrona.DirectBuffer;
+import org.agrona.concurrent.UnsafeBuffer;
 import org.reaktivity.nukleus.Configuration;
 
 public class SseConfiguration extends Configuration
@@ -23,6 +25,7 @@ public class SseConfiguration extends Configuration
     public static final String INITIAL_COMMENT_ENABLED = "nukleus.sse.initial.comment.enabled";
 
     private static final boolean INITIAL_COMMENT_ENABLED_DEFAULT = false;
+    private static final DirectBuffer INITIAL_COMMENT_DEFAULT = new UnsafeBuffer(new byte[0]);
 
     public SseConfiguration(
         Configuration config)
@@ -30,9 +33,10 @@ public class SseConfiguration extends Configuration
         super(config);
     }
 
-    public boolean initialComment()
+    public DirectBuffer initialComment()
     {
-        return getBoolean(INITIAL_COMMENT_ENABLED, INITIAL_COMMENT_ENABLED_DEFAULT);
+        boolean enabled = getBoolean(INITIAL_COMMENT_ENABLED, INITIAL_COMMENT_ENABLED_DEFAULT);
+        return enabled ? INITIAL_COMMENT_DEFAULT : null;
     }
 
 }
