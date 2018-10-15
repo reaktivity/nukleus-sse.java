@@ -17,6 +17,7 @@ package org.reaktivity.nukleus.sse.internal.streams.server;
 
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.junit.rules.RuleChain.outerRule;
+import static org.reaktivity.nukleus.sse.internal.SseConfiguration.INITIAL_COMMENT_ENABLED;
 
 import org.junit.Rule;
 import org.junit.Test;
@@ -26,6 +27,7 @@ import org.junit.rules.Timeout;
 import org.kaazing.k3po.junit.annotation.Specification;
 import org.kaazing.k3po.junit.rules.K3poRule;
 import org.reaktivity.reaktor.test.ReaktorRule;
+import org.reaktivity.reaktor.test.annotation.Configure;
 
 public class HandshakeIT
 {
@@ -46,6 +48,17 @@ public class HandshakeIT
 
     @Rule
     public final TestRule chain = outerRule(reaktor).around(k3po).around(timeout);
+
+    @Test
+    @Configure(name = INITIAL_COMMENT_ENABLED, value = "true")
+    @Specification({
+            "${route}/server/controller",
+            "${client}/initial.comment/request",
+            "${server}/last.event.id/response" })
+    public void shouldSendInitialComment() throws Exception
+    {
+        k3po.finish();
+    }
 
     @Test
     @Specification({
