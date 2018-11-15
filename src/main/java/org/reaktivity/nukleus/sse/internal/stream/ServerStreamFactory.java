@@ -457,6 +457,7 @@ public final class ServerStreamFactory implements StreamFactory
 
         private MessageConsumer streamState;
 
+        private int minimumNetworkReplyBudget = -1;
         private int networkReplyBudget;
         private int networkReplyPadding;
 
@@ -464,7 +465,6 @@ public final class ServerStreamFactory implements StreamFactory
         private LongConsumer readBytesAccumulator;
         private LongSupplier readFrameCounter;
         private boolean timestampRequested;
-        private boolean commentWritten;
 
         private ServerConnectReplyStream(
             MessageConsumer applicationReplyThrottle,
@@ -722,27 +722,36 @@ public final class ServerStreamFactory implements StreamFactory
             networkReplyBudget += window.credit();
             networkReplyPadding = window.padding();
 
-            if (initialComment != null && !commentWritten)
+            if (minimumNetworkReplyBudget == -1)
             {
-                final int bytesWritten = doHttpData(
-                        networkReply,
-                        networkReplyId,
-                        supplyTrace.getAsLong(),
-                        FIN | INIT,
-                        networkReplyPadding,
-                        null,
-                        null,
-                        null,
-                        0L,
-                        initialComment);
+                minimumNetworkReplyBudget = window.credit();
 
-                networkReplyBudget -= bytesWritten + networkReplyPadding;
-                assert networkReplyBudget >= 0;
-                commentWritten = true;
+                if (initialComment != null)
+                {
+                    final int bytesWritten = doHttpData(
+                            networkReply,
+                            networkReplyId,
+                            supplyTrace.getAsLong(),
+                            FIN | INIT,
+                            networkReplyPadding,
+                            null,
+                            null,
+                            null,
+                            0L,
+                            initialComment);
+
+                    networkReplyBudget -= bytesWritten + networkReplyPadding;
+                    assert networkReplyBudget >= 0;
+                }
+            }
+
+            if (networkReplyBudget < minimumNetworkReplyBudget)
+            {
                 // Not sending WINDOW to application side as group budget expects full initial window first time
-                // Next WINDOW makes it full window and it goes as first WINDOW to application side
+                // Wait until it builds up to full initial window
                 return;
             }
+            minimumNetworkReplyBudget = 0;
 
             if (networkSlot != NO_SLOT && networkReplyBudget >= networkSlotOffset + networkReplyPadding)
             {
