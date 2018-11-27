@@ -440,7 +440,8 @@ public final class ServerStreamFactory implements StreamFactory
         private void handleReset(
             ResetFW reset)
         {
-            doReset(acceptThrottle, acceptId);
+            final long traceId = reset.trace();
+            doReset(acceptThrottle, acceptId, traceId);
         }
     }
 
@@ -530,6 +531,7 @@ public final class ServerStreamFactory implements StreamFactory
         private void handleBegin(
             BeginFW begin)
         {
+            final long applicationReplyTraceId = begin.trace();
             final long applicationReplyRef = begin.sourceRef();
             final long correlationId = begin.correlationId();
 
@@ -552,6 +554,7 @@ public final class ServerStreamFactory implements StreamFactory
                         newNetworkReplyId,
                         0L,
                         newCorrelationId,
+                        applicationReplyTraceId,
                         this::setHttpResponseHeadersWithTimestampExt);
                 }
                 else
@@ -561,6 +564,7 @@ public final class ServerStreamFactory implements StreamFactory
                         newNetworkReplyId,
                         0L,
                         newCorrelationId,
+                        applicationReplyTraceId,
                         this::setHttpResponseHeaders);
                 }
 
@@ -792,10 +796,12 @@ public final class ServerStreamFactory implements StreamFactory
         long streamId,
         long referenceId,
         long correlationId,
+        long traceId,
         Consumer<ListFW.Builder<HttpHeaderFW.Builder, HttpHeaderFW>> mutator)
     {
         BeginFW begin = beginRW.wrap(writeBuffer, 0, writeBuffer.capacity())
                 .streamId(streamId)
+                .trace(traceId)
                 .source("sse")
                 .sourceRef(referenceId)
                 .correlationId(correlationId)
