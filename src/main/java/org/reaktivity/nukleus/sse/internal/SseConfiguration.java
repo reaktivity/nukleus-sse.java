@@ -21,21 +21,28 @@ import org.reaktivity.nukleus.Configuration;
 
 public class SseConfiguration extends Configuration
 {
-    public static final String INITIAL_COMMENT_ENABLED = "nukleus.sse.initial.comment.enabled";
+    public static final BooleanPropertyDef SSE_INITIAL_COMMENT_ENABLED;
 
-    private static final boolean INITIAL_COMMENT_ENABLED_DEFAULT = false;
     private static final DirectBuffer INITIAL_COMMENT_DEFAULT = new UnsafeBuffer(new byte[0]);
+
+    private static final ConfigurationDef SSE_CONFIG;
+
+    static
+    {
+        final ConfigurationDef config = new ConfigurationDef("nukleus.sse");
+        SSE_INITIAL_COMMENT_ENABLED = config.property("initial.comment.enabled", false);
+        SSE_CONFIG = config;
+    }
 
     public SseConfiguration(
         Configuration config)
     {
-        super(config);
+        super(SSE_CONFIG, config);
     }
 
     public DirectBuffer initialComment()
     {
-        boolean enabled = getBoolean(INITIAL_COMMENT_ENABLED, INITIAL_COMMENT_ENABLED_DEFAULT);
-        return enabled ? INITIAL_COMMENT_DEFAULT : null;
+        return SSE_INITIAL_COMMENT_ENABLED.getAsBoolean(this) ? INITIAL_COMMENT_DEFAULT : null;
     }
 
 }

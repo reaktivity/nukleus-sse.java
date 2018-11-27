@@ -17,7 +17,7 @@ package org.reaktivity.nukleus.sse.internal.streams.server;
 
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.junit.rules.RuleChain.outerRule;
-import static org.reaktivity.nukleus.sse.internal.SseConfiguration.INITIAL_COMMENT_ENABLED;
+import static org.reaktivity.nukleus.sse.internal.SseConfigurationTest.SSE_INITIAL_COMMENT_ENABLED_NAME;
 
 import org.junit.Rule;
 import org.junit.Test;
@@ -50,7 +50,7 @@ public class HandshakeIT
     public final TestRule chain = outerRule(reaktor).around(k3po).around(timeout);
 
     @Test
-    @Configure(name = INITIAL_COMMENT_ENABLED, value = "true")
+    @Configure(name = SSE_INITIAL_COMMENT_ENABLED_NAME, value = "true")
     @Specification({
             "${route}/server/controller",
             "${client}/initial.comment/request",
