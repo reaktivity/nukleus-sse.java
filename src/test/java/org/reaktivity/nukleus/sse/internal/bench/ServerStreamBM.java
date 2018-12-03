@@ -173,7 +173,8 @@ public class ServerStreamBM
                 .setGroupBudgetReleaser(g -> c -> c)
                 .setGroupIdSupplier(() -> ++groupId.value)
                 .setRouteManager(router)
-                .setStreamIdSupplier(() -> ++streamId.value)
+                .setInitialIdSupplier(() -> ++streamId.value)
+                .setReplyIdSupplier(initial -> initial | 0x8000_0000_0000_0000L)
                 .setTraceSupplier(() -> ++traceId.value)
                 .setWriteBuffer(writeBuffer)
                 .build();
@@ -259,8 +260,7 @@ public class ServerStreamBM
                                                                                                .value("/"))
                                                                           .limit()))
                                              .build();
-        MessageConsumer throttle = (t, b, o, l) -> {};
-        streamFactory.newStream(begin.typeId(), begin.buffer(), begin.offset(), begin.sizeof(), throttle)
+        streamFactory.newStream(begin.typeId(), begin.buffer(), begin.offset(), begin.sizeof(), (t, b, o, l) -> {})
                      .accept(begin.typeId(), begin.buffer(), begin.offset(), begin.sizeof());
         // TOOD: end request stream
         DataFW data = new DataFW.Builder().wrap(buffer, 0, buffer.capacity())
