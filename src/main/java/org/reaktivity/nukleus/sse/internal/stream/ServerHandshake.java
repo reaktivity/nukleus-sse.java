@@ -20,6 +20,7 @@ import java.util.function.LongSupplier;
 
 public final class ServerHandshake
 {
+    private final long networkId;
     private final String networkName;
     private final long correlationId;
     private final LongSupplier readFrameCounter;
@@ -27,17 +28,24 @@ public final class ServerHandshake
     private final boolean timestampRequested;
 
     public ServerHandshake(
+        long networkId,
         String networkName,
         long correlationId,
         LongSupplier readFrameCounter,
         LongConsumer readBytesAccumulator,
         boolean timestampRequested)
     {
+        this.networkId = networkId;
         this.networkName = networkName;
         this.correlationId = correlationId;
         this.readFrameCounter = readFrameCounter;
         this.readBytesAccumulator = readBytesAccumulator;
         this.timestampRequested = timestampRequested;
+    }
+
+    public long networkId()
+    {
+        return networkId;
     }
 
     public String networkName()

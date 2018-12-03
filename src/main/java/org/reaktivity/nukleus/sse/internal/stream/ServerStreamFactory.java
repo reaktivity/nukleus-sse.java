@@ -30,6 +30,7 @@ import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.LongConsumer;
 import java.util.function.LongSupplier;
+import java.util.function.LongUnaryOperator;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -107,7 +108,8 @@ public final class ServerStreamFactory implements StreamFactory
     private final RouteManager router;
     private final MutableDirectBuffer writeBuffer;
     private final BufferPool bufferPool;
-    private final LongSupplier supplyStreamId;
+    private final LongSupplier supplyInitialId;
+    private final LongUnaryOperator supplyReplyId;
     private final LongSupplier supplyTrace;
     private final LongSupplier supplyCorrelationId;
     private final DirectBuffer initialComment;
@@ -125,7 +127,8 @@ public final class ServerStreamFactory implements StreamFactory
         RouteManager router,
         MutableDirectBuffer writeBuffer,
         BufferPool bufferPool,
-        LongSupplier supplyStreamId,
+        LongSupplier supplyInitialId,
+        LongUnaryOperator supplyReplyId,
         LongSupplier supplyTrace,
         LongSupplier supplyCorrelationId,
         Long2ObjectHashMap<ServerHandshake> correlations,
@@ -137,7 +140,8 @@ public final class ServerStreamFactory implements StreamFactory
         this.router = requireNonNull(router);
         this.writeBuffer = requireNonNull(writeBuffer);
         this.bufferPool = requireNonNull(bufferPool);
-        this.supplyStreamId = requireNonNull(supplyStreamId);
+        this.supplyInitialId = requireNonNull(supplyInitialId);
+        this.supplyReplyId = requireNonNull(supplyReplyId);
         this.supplyTrace = requireNonNull(supplyTrace);
         this.supplyCorrelationId = requireNonNull(supplyCorrelationId);
         this.correlations = requireNonNull(correlations);
@@ -375,13 +379,14 @@ public final class ServerStreamFactory implements StreamFactory
                 final MessageConsumer connectTarget = router.supplyTarget(connectName);
 
                 final long connectRef = route.targetRef();
-                final long newConnectId = supplyStreamId.getAsLong();
+                final long newConnectId = supplyInitialId.getAsLong();
                 final long newCorrelationId = supplyCorrelationId.getAsLong();
 
                 final boolean timestampRequested = httpBeginEx.headers().anyMatch(header ->
                     "accept".equals(header.name().asString()) && header.value().asString().contains("ext=timestamp"));
 
                 ServerHandshake handshake = new ServerHandshake(
+                    acceptId,
                     acceptName,
                     correlationId,
                     readFrameCounter,
@@ -542,7 +547,7 @@ public final class ServerStreamFactory implements StreamFactory
                 final String networkReplyName = handshake.networkName();
 
                 final MessageConsumer newNetworkReply = router.supplyTarget(networkReplyName);
-                final long newNetworkReplyId = supplyStreamId.getAsLong();
+                final long newNetworkReplyId = supplyReplyId.applyAsLong(handshake.networkId());
                 final long newCorrelationId = handshake.correlationId();
                 this.timestampRequested = handshake.timestampRequested();
 
