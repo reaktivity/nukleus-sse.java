@@ -15,32 +15,34 @@
  */
 package org.reaktivity.nukleus.sse.internal.stream;
 
-import java.util.function.LongConsumer;
-import java.util.function.LongSupplier;
-
 public final class ServerHandshake
 {
+    private final long networkRouteId;
     private final long networkId;
     private final String networkName;
     private final long correlationId;
-    private final LongSupplier readFrameCounter;
-    private final LongConsumer readBytesAccumulator;
+    private final long applicationRouteId;
     private final boolean timestampRequested;
 
     public ServerHandshake(
+        long networkRouteId,
         long networkId,
         String networkName,
         long correlationId,
-        LongSupplier readFrameCounter,
-        LongConsumer readBytesAccumulator,
+        long applicationRouteId,
         boolean timestampRequested)
     {
+        this.networkRouteId = networkRouteId;
         this.networkId = networkId;
         this.networkName = networkName;
         this.correlationId = correlationId;
-        this.readFrameCounter = readFrameCounter;
-        this.readBytesAccumulator = readBytesAccumulator;
+        this.applicationRouteId = applicationRouteId;
         this.timestampRequested = timestampRequested;
+    }
+
+    public long networkRouteId()
+    {
+        return networkRouteId;
     }
 
     public long networkId()
@@ -58,14 +60,9 @@ public final class ServerHandshake
         return correlationId;
     }
 
-    public LongSupplier readFrameCounter()
+    public long applicationRouteId()
     {
-        return readFrameCounter;
-    }
-
-    public LongConsumer readBytesAccumulator()
-    {
-        return readBytesAccumulator;
+        return applicationRouteId;
     }
 
     public boolean timestampRequested()

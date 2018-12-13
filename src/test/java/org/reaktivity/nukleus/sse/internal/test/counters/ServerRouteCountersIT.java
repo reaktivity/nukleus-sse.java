@@ -16,9 +16,9 @@
 package org.reaktivity.nukleus.sse.internal.test.counters;
 
 import static java.util.concurrent.TimeUnit.SECONDS;
+import static org.junit.Assert.assertEquals;
 import static org.junit.rules.RuleChain.outerRule;
 
-import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.DisableOnDebug;
@@ -26,11 +26,12 @@ import org.junit.rules.TestRule;
 import org.junit.rules.Timeout;
 import org.kaazing.k3po.junit.annotation.Specification;
 import org.kaazing.k3po.junit.rules.K3poRule;
-import org.reaktivity.nukleus.sse.internal.test.SseCountersRule;
 import org.reaktivity.reaktor.test.ReaktorRule;
 
-public class FrameAndBytesCounterIT
+public class ServerRouteCountersIT
 {
+    private static final int SERVER_ROUTE_ID = 0x00000001;
+
     private final K3poRule k3po = new K3poRule()
             .addScriptRoot("route", "org/reaktivity/specification/nukleus/sse/control/route")
             .addScriptRoot("client", "org/reaktivity/specification/sse/data")
@@ -43,14 +44,12 @@ public class FrameAndBytesCounterIT
         .controller("sse"::equals)
         .commandBufferCapacity(1024)
         .responseBufferCapacity(1024)
-        .counterValuesBufferCapacity(1024)
+        .counterValuesBufferCapacity(4096)
         .nukleus("sse"::equals)
         .clean();
 
-    private final SseCountersRule counters = new SseCountersRule(reaktor);
-
     @Rule
-    public final TestRule chain = outerRule(reaktor).around(counters).around(k3po).around(timeout);
+    public final TestRule chain = outerRule(reaktor).around(k3po).around(timeout);
 
     @Test
     @Specification({
@@ -60,10 +59,10 @@ public class FrameAndBytesCounterIT
     public void shouldReceiveNonEmptyMessage() throws Exception
     {
         k3po.finish();
-        final long routeId = 0;
-        Assert.assertEquals(12, counters.bytesRead(routeId));
-        Assert.assertEquals(0, counters.bytesWritten(routeId));
-        Assert.assertEquals(1, counters.framesRead(routeId));
-        Assert.assertEquals(0, counters.framesWritten(routeId));
+
+        assertEquals(12, reaktor.bytesRead("sse", SERVER_ROUTE_ID));
+        assertEquals(0, reaktor.bytesWritten("sse", SERVER_ROUTE_ID));
+        assertEquals(1, reaktor.framesRead("sse", SERVER_ROUTE_ID));
+        assertEquals(0, reaktor.framesWritten("sse", SERVER_ROUTE_ID));
     }
 }
