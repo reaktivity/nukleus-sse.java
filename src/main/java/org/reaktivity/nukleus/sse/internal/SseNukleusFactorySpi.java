@@ -40,7 +40,6 @@ public final class SseNukleusFactorySpi implements NukleusFactorySpi
         ServerStreamFactoryBuilder serverStreamFactoryBuilder = new ServerStreamFactoryBuilder(sseConfig);
         return builder.configure(sseConfig)
                       .streamFactory(SERVER, serverStreamFactoryBuilder)
-                      .routeHandler(SERVER, serverStreamFactoryBuilder::handleRoute)
                       .build();
     }
 }
