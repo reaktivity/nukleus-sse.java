@@ -147,17 +147,17 @@ public final class ServerStreamFactory implements StreamFactory
         MessageConsumer throttle)
     {
         final BeginFW begin = beginRO.wrap(buffer, index, index + length);
-        final long sourceRef = begin.sourceRef();
+        final long streamId = begin.streamId();
 
         MessageConsumer newStream;
 
-        if (sourceRef == 0L)
+        if ((streamId & 0x8000_0000_0000_0000L) == 0L)
         {
-            newStream = newConnectReplyStream(begin, throttle);
+            newStream = newAcceptStream(begin, throttle);
         }
         else
         {
-            newStream = newAcceptStream(begin, throttle);
+            newStream = newConnectReplyStream(begin, throttle);
         }
 
         return newStream;
@@ -167,29 +167,20 @@ public final class ServerStreamFactory implements StreamFactory
         final BeginFW begin,
         final MessageConsumer acceptThrottle)
     {
-        final long acceptRef = begin.sourceRef();
-        final String acceptName = begin.source().asString();
+        final long acceptRouteId = begin.routeId();
 
-        final MessagePredicate filter = (t, b, o, l) ->
-        {
-            final RouteFW route = routeRO.wrap(b, o, o + l);
-            return acceptRef == route.sourceRef() &&
-                    acceptName.equals(route.source().asString());
-        };
-
-        final RouteFW route = router.resolve(begin.authorization(), filter, this::wrapRoute);
+        final MessagePredicate filter = (t, b, o, l) -> true;
+        final RouteFW route = router.resolve(acceptRouteId, begin.authorization(), filter, this::wrapRoute);
 
         MessageConsumer newStream = null;
 
         if (route != null)
         {
-            final long acceptRouteId = begin.routeId();
             final long acceptId = begin.streamId();
             newStream = new ServerAcceptStream(
                     acceptThrottle,
                     acceptRouteId,
-                    acceptId,
-                    acceptRef)::handleStream;
+                    acceptId)::handleStream;
         }
 
         return newStream;
@@ -229,8 +220,7 @@ public final class ServerStreamFactory implements StreamFactory
         private ServerAcceptStream(
             MessageConsumer acceptThrottle,
             long acceptRouteId,
-            long acceptId,
-            long acceptRef)
+            long acceptId)
         {
             this.acceptThrottle = acceptThrottle;
             this.acceptRouteId = acceptRouteId;
@@ -290,11 +280,10 @@ public final class ServerStreamFactory implements StreamFactory
         private void handleBegin(
             BeginFW begin)
         {
-            final long traceId = begin.trace();
-            final String acceptName = begin.source().asString();
-            final long acceptRef = begin.sourceRef();
+            final long acceptRouteId = begin.routeId();
             final long correlationId = begin.correlationId();
             final OctetsFW extension = begin.extension();
+            final long traceId = begin.trace();
 
             // TODO: need lightweight approach (start)
             final HttpBeginExFW httpBeginEx = extension.get(httpBeginExRO::wrap);
@@ -344,26 +333,21 @@ public final class ServerStreamFactory implements StreamFactory
                 final SseRouteExFW routeEx = route.extension().get(sseRouteExRO::wrap);
                 final String routePathInfo = routeEx.pathInfo().asString();
 
-                return acceptRef == route.sourceRef() &&
-                        acceptName.equals(route.source().asString());
-
                 // TODO: process pathInfo matching
                 //       && acceptPathInfo.startsWith(pathInfo);
+                return true;
             };
 
-            final RouteFW route = router.resolve(begin.authorization(), filter, wrapRoute);
+            final RouteFW route = router.resolve(acceptRouteId, begin.authorization(), filter, wrapRoute);
 
             if (route != null)
             {
                 final SseRouteExFW sseRouteEx = route.extension().get(sseRouteExRO::wrap);
 
-                final String connectName = route.target().asString();
-                final MessageConsumer connectTarget = router.supplyTarget(connectName);
-
                 final long connectRouteId = route.correlationId();
-                final long connectRef = route.targetRef();
                 final long newConnectId = supplyInitialId.getAsLong();
                 final long newCorrelationId = supplyCorrelationId.getAsLong();
+                final MessageConsumer connectTarget = router.supplyReceiver(connectRouteId);
 
                 final boolean timestampRequested = httpBeginEx.headers().anyMatch(header ->
                     "accept".equals(header.name().asString()) && header.value().asString().contains("ext=timestamp"));
@@ -371,15 +355,14 @@ public final class ServerStreamFactory implements StreamFactory
                 ServerHandshake handshake = new ServerHandshake(
                     acceptRouteId,
                     acceptId,
-                    acceptName,
                     correlationId,
                     connectRouteId,
                     timestampRequested);
 
                 correlations.put(newCorrelationId, handshake);
 
-                router.setThrottle(connectName, newConnectId, this::handleThrottle);
-                doSseBegin(connectTarget, connectRouteId, newConnectId, traceId, connectRef,
+                router.setThrottle(newConnectId, this::handleThrottle);
+                doSseBegin(connectTarget, connectRouteId, newConnectId, traceId,
                         newCorrelationId, pathInfo, lastEventId);
 
                 this.connectRouteId = connectRouteId;
@@ -524,29 +507,26 @@ public final class ServerStreamFactory implements StreamFactory
             BeginFW begin)
         {
             final long applicationReplyTraceId = begin.trace();
-            final long applicationReplyRef = begin.sourceRef();
             final long correlationId = begin.correlationId();
 
             final ServerHandshake handshake = correlations.remove(correlationId);
 
-            if (applicationReplyRef == 0L && handshake != null)
+            if (handshake != null)
             {
-                final String networkReplyName = handshake.networkName();
                 final long networkRouteId = handshake.networkRouteId();
 
-                final MessageConsumer newNetworkReply = router.supplyTarget(networkReplyName);
+                final MessageConsumer newNetworkReply = router.supplySender(networkRouteId);
                 final long newNetworkReplyId = supplyReplyId.applyAsLong(handshake.networkId());
                 final long newCorrelationId = handshake.correlationId();
                 this.timestampRequested = handshake.timestampRequested();
 
-                router.setThrottle(networkReplyName, newNetworkReplyId, this::handleThrottle);
+                router.setThrottle(newNetworkReplyId, this::handleThrottle);
                 if (timestampRequested)
                 {
                     doHttpBegin(
                         newNetworkReply,
                         networkRouteId,
                         newNetworkReplyId,
-                        0L,
                         newCorrelationId,
                         applicationReplyTraceId,
                         this::setHttpResponseHeadersWithTimestampExt);
@@ -557,7 +537,6 @@ public final class ServerStreamFactory implements StreamFactory
                         newNetworkReply,
                         networkRouteId,
                         newNetworkReplyId,
-                        0L,
                         newCorrelationId,
                         applicationReplyTraceId,
                         this::setHttpResponseHeaders);
@@ -790,7 +769,6 @@ public final class ServerStreamFactory implements StreamFactory
         MessageConsumer receiver,
         long routeId,
         long streamId,
-        long referenceId,
         long correlationId,
         long traceId,
         Consumer<ListFW.Builder<HttpHeaderFW.Builder, HttpHeaderFW>> mutator)
@@ -799,8 +777,6 @@ public final class ServerStreamFactory implements StreamFactory
                 .routeId(routeId)
                 .streamId(streamId)
                 .trace(traceId)
-                .source("sse")
-                .sourceRef(referenceId)
                 .correlationId(correlationId)
                 .extension(e -> e.set(visitHttpBeginEx(mutator)))
                 .build();
@@ -883,7 +859,6 @@ public final class ServerStreamFactory implements StreamFactory
         long routeId,
         long streamId,
         long traceId,
-        long streamRef,
         long correlationId,
         String pathInfo,
         String lastEventId)
@@ -892,8 +867,6 @@ public final class ServerStreamFactory implements StreamFactory
                 .routeId(routeId)
                 .streamId(streamId)
                 .trace(traceId)
-                .source("sse")
-                .sourceRef(streamRef)
                 .correlationId(correlationId)
                 .extension(e -> e.set(visitSseBeginEx(pathInfo, lastEventId)))
                 .build();
