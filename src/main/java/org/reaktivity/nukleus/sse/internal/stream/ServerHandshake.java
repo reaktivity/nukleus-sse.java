@@ -19,7 +19,6 @@ public final class ServerHandshake
 {
     private final long networkRouteId;
     private final long networkId;
-    private final String networkName;
     private final long correlationId;
     private final long applicationRouteId;
     private final boolean timestampRequested;
@@ -27,14 +26,12 @@ public final class ServerHandshake
     public ServerHandshake(
         long networkRouteId,
         long networkId,
-        String networkName,
         long correlationId,
         long applicationRouteId,
         boolean timestampRequested)
     {
         this.networkRouteId = networkRouteId;
         this.networkId = networkId;
-        this.networkName = networkName;
         this.correlationId = correlationId;
         this.applicationRouteId = applicationRouteId;
         this.timestampRequested = timestampRequested;
@@ -48,11 +45,6 @@ public final class ServerHandshake
     public long networkId()
     {
         return networkId;
-    }
-
-    public String networkName()
-    {
-        return networkName;
     }
 
     public long correlationId()
