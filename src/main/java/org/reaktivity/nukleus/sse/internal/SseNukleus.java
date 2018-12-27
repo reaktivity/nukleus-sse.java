@@ -15,22 +15,35 @@
  */
 package org.reaktivity.nukleus.sse.internal;
 
-import org.reaktivity.nukleus.Configuration;
-import org.reaktivity.nukleus.NukleusFactorySpi;
+import org.reaktivity.nukleus.Nukleus;
 
-public final class SseNukleusFactorySpi implements NukleusFactorySpi
+final class SseNukleus implements Nukleus
 {
+    static final String NAME = "sse";
+
+    private final SseConfiguration config;
+
+    SseNukleus(
+        SseConfiguration config)
+    {
+        this.config = config;
+    }
+
     @Override
     public String name()
     {
         return SseNukleus.NAME;
     }
 
+    @Override
+    public SseConfiguration config()
+    {
+        return config;
+    }
 
     @Override
-    public SseNukleus create(
-        Configuration config)
+    public SseElektron supplyElektron()
     {
-        return new SseNukleus(new SseConfiguration(config));
+        return new SseElektron(config);
     }
 }
