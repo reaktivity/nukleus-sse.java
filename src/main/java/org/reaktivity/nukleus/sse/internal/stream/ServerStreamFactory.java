@@ -168,7 +168,7 @@ public final class ServerStreamFactory implements StreamFactory
 
     private MessageConsumer newAcceptStream(
         final BeginFW begin,
-        final MessageConsumer acceptThrottle)
+        final MessageConsumer acceptReply)
     {
         final long acceptRouteId = begin.routeId();
 
@@ -179,11 +179,12 @@ public final class ServerStreamFactory implements StreamFactory
 
         if (route != null)
         {
-            final long acceptId = begin.streamId();
+            final long acceptInitialId = begin.streamId();
+
             newStream = new ServerAcceptStream(
-                    acceptThrottle,
+                    acceptReply,
                     acceptRouteId,
-                    acceptId)::handleStream;
+                    acceptInitialId)::handleStream;
         }
 
         return newStream;
@@ -210,7 +211,7 @@ public final class ServerStreamFactory implements StreamFactory
 
     private final class ServerAcceptStream
     {
-        private final MessageConsumer acceptThrottle;
+        private final MessageConsumer acceptReply;
         private final long acceptRouteId;
         private final long acceptId;
 
@@ -221,11 +222,11 @@ public final class ServerStreamFactory implements StreamFactory
         private MessageConsumer streamState;
 
         private ServerAcceptStream(
-            MessageConsumer acceptThrottle,
+            MessageConsumer acceptReply,
             long acceptRouteId,
             long acceptId)
         {
-            this.acceptThrottle = acceptThrottle;
+            this.acceptReply = acceptReply;
             this.acceptRouteId = acceptRouteId;
             this.acceptId = acceptId;
 
@@ -254,7 +255,7 @@ public final class ServerStreamFactory implements StreamFactory
             }
             else
             {
-                doReset(acceptThrottle, acceptRouteId, acceptId);
+                doReset(acceptReply, acceptRouteId, acceptId);
             }
         }
 
@@ -275,7 +276,7 @@ public final class ServerStreamFactory implements StreamFactory
                 handleAbort(abort);
                 break;
             default:
-                doReset(acceptThrottle, acceptRouteId, acceptId);
+                doReset(acceptReply, acceptRouteId, acceptId);
                 break;
             }
         }
@@ -356,6 +357,7 @@ public final class ServerStreamFactory implements StreamFactory
                     "accept".equals(header.name().asString()) && header.value().asString().contains("ext=timestamp"));
 
                 ServerHandshake handshake = new ServerHandshake(
+                    acceptReply,
                     acceptRouteId,
                     acceptId,
                     correlationId,
@@ -374,7 +376,7 @@ public final class ServerStreamFactory implements StreamFactory
             }
             else
             {
-                doReset(acceptThrottle, acceptRouteId, acceptId); // 4xx
+                doReset(acceptReply, acceptRouteId, acceptId); // 4xx
             }
 
             this.streamState = this::afterBegin;
@@ -417,7 +419,7 @@ public final class ServerStreamFactory implements StreamFactory
             ResetFW reset)
         {
             final long traceId = reset.trace();
-            doReset(acceptThrottle, acceptRouteId, acceptId, traceId);
+            doReset(acceptReply, acceptRouteId, acceptId, traceId);
         }
     }
 
@@ -518,7 +520,7 @@ public final class ServerStreamFactory implements StreamFactory
             {
                 final long networkRouteId = handshake.networkRouteId();
 
-                final MessageConsumer newNetworkReply = router.supplySender(networkRouteId);
+                final MessageConsumer networkReply = handshake.networkReply();
                 final long newNetworkReplyId = supplyReplyId.applyAsLong(handshake.networkId());
                 final long newCorrelationId = handshake.correlationId();
                 this.timestampRequested = handshake.timestampRequested();
@@ -527,7 +529,7 @@ public final class ServerStreamFactory implements StreamFactory
                 if (timestampRequested)
                 {
                     doHttpBegin(
-                        newNetworkReply,
+                        networkReply,
                         networkRouteId,
                         newNetworkReplyId,
                         newCorrelationId,
@@ -537,7 +539,7 @@ public final class ServerStreamFactory implements StreamFactory
                 else
                 {
                     doHttpBegin(
-                        newNetworkReply,
+                        networkReply,
                         networkRouteId,
                         newNetworkReplyId,
                         newCorrelationId,
@@ -545,7 +547,7 @@ public final class ServerStreamFactory implements StreamFactory
                         setHttpResponseHeaders);
                 }
 
-                this.networkReply = newNetworkReply;
+                this.networkReply = networkReply;
                 this.networkRouteId = networkRouteId;
                 this.networkReplyId = newNetworkReplyId;
 

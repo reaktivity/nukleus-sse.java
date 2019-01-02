@@ -15,26 +15,36 @@
  */
 package org.reaktivity.nukleus.sse.internal.stream;
 
+import org.reaktivity.nukleus.function.MessageConsumer;
+
 public final class ServerHandshake
 {
+    private final MessageConsumer networkReply;
     private final long networkRouteId;
-    private final long networkId;
+    private final long networkInitialId;
     private final long correlationId;
     private final long applicationRouteId;
     private final boolean timestampRequested;
 
     public ServerHandshake(
+        MessageConsumer networkReply,
         long networkRouteId,
-        long networkId,
+        long networkInitialId,
         long correlationId,
         long applicationRouteId,
         boolean timestampRequested)
     {
+        this.networkReply = networkReply;
         this.networkRouteId = networkRouteId;
-        this.networkId = networkId;
+        this.networkInitialId = networkInitialId;
         this.correlationId = correlationId;
         this.applicationRouteId = applicationRouteId;
         this.timestampRequested = timestampRequested;
+    }
+
+    public MessageConsumer networkReply()
+    {
+        return networkReply;
     }
 
     public long networkRouteId()
@@ -44,7 +54,7 @@ public final class ServerHandshake
 
     public long networkId()
     {
-        return networkId;
+        return networkInitialId;
     }
 
     public long correlationId()
