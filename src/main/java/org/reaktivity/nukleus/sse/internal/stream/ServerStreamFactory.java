@@ -45,7 +45,6 @@ import org.reaktivity.nukleus.sse.internal.types.Flyweight;
 import org.reaktivity.nukleus.sse.internal.types.HttpHeaderFW;
 import org.reaktivity.nukleus.sse.internal.types.ListFW;
 import org.reaktivity.nukleus.sse.internal.types.OctetsFW;
-import org.reaktivity.nukleus.sse.internal.types.OctetsFW.Builder;
 import org.reaktivity.nukleus.sse.internal.types.codec.SseEventFW;
 import org.reaktivity.nukleus.sse.internal.types.control.RouteFW;
 import org.reaktivity.nukleus.sse.internal.types.control.SseRouteExFW;
@@ -114,6 +113,8 @@ public final class ServerStreamFactory implements StreamFactory
 
     private final Long2ObjectHashMap<ServerHandshake> correlations;
     private final MessageFunction<RouteFW> wrapRoute;
+    private final Consumer<ListFW.Builder<HttpHeaderFW.Builder, HttpHeaderFW>> setHttpResponseHeaders;
+    private final Consumer<ListFW.Builder<HttpHeaderFW.Builder, HttpHeaderFW>> setHttpResponseHeadersWithTimestampExt;
 
     public ServerStreamFactory(
         SseConfiguration config,
@@ -136,6 +137,8 @@ public final class ServerStreamFactory implements StreamFactory
         this.correlations = requireNonNull(correlations);
         this.wrapRoute = this::wrapRoute;
         this.initialComment = config.initialComment();
+        this.setHttpResponseHeaders = this::setHttpResponseHeaders;
+        this.setHttpResponseHeadersWithTimestampExt = this::setHttpResponseHeadersWithTimestampExt;
     }
 
     @Override
@@ -165,7 +168,7 @@ public final class ServerStreamFactory implements StreamFactory
 
     private MessageConsumer newAcceptStream(
         final BeginFW begin,
-        final MessageConsumer acceptThrottle)
+        final MessageConsumer acceptReply)
     {
         final long acceptRouteId = begin.routeId();
 
@@ -176,11 +179,12 @@ public final class ServerStreamFactory implements StreamFactory
 
         if (route != null)
         {
-            final long acceptId = begin.streamId();
+            final long acceptInitialId = begin.streamId();
+
             newStream = new ServerAcceptStream(
-                    acceptThrottle,
+                    acceptReply,
                     acceptRouteId,
-                    acceptId)::handleStream;
+                    acceptInitialId)::handleStream;
         }
 
         return newStream;
@@ -207,7 +211,7 @@ public final class ServerStreamFactory implements StreamFactory
 
     private final class ServerAcceptStream
     {
-        private final MessageConsumer acceptThrottle;
+        private final MessageConsumer acceptReply;
         private final long acceptRouteId;
         private final long acceptId;
 
@@ -218,11 +222,11 @@ public final class ServerStreamFactory implements StreamFactory
         private MessageConsumer streamState;
 
         private ServerAcceptStream(
-            MessageConsumer acceptThrottle,
+            MessageConsumer acceptReply,
             long acceptRouteId,
             long acceptId)
         {
-            this.acceptThrottle = acceptThrottle;
+            this.acceptReply = acceptReply;
             this.acceptRouteId = acceptRouteId;
             this.acceptId = acceptId;
 
@@ -251,7 +255,7 @@ public final class ServerStreamFactory implements StreamFactory
             }
             else
             {
-                doReset(acceptThrottle, acceptRouteId, acceptId);
+                doReset(acceptReply, acceptRouteId, acceptId);
             }
         }
 
@@ -272,7 +276,7 @@ public final class ServerStreamFactory implements StreamFactory
                 handleAbort(abort);
                 break;
             default:
-                doReset(acceptThrottle, acceptRouteId, acceptId);
+                doReset(acceptReply, acceptRouteId, acceptId);
                 break;
             }
         }
@@ -353,6 +357,7 @@ public final class ServerStreamFactory implements StreamFactory
                     "accept".equals(header.name().asString()) && header.value().asString().contains("ext=timestamp"));
 
                 ServerHandshake handshake = new ServerHandshake(
+                    acceptReply,
                     acceptRouteId,
                     acceptId,
                     correlationId,
@@ -371,7 +376,7 @@ public final class ServerStreamFactory implements StreamFactory
             }
             else
             {
-                doReset(acceptThrottle, acceptRouteId, acceptId); // 4xx
+                doReset(acceptReply, acceptRouteId, acceptId); // 4xx
             }
 
             this.streamState = this::afterBegin;
@@ -414,7 +419,7 @@ public final class ServerStreamFactory implements StreamFactory
             ResetFW reset)
         {
             final long traceId = reset.trace();
-            doReset(acceptThrottle, acceptRouteId, acceptId, traceId);
+            doReset(acceptReply, acceptRouteId, acceptId, traceId);
         }
     }
 
@@ -515,7 +520,7 @@ public final class ServerStreamFactory implements StreamFactory
             {
                 final long networkRouteId = handshake.networkRouteId();
 
-                final MessageConsumer newNetworkReply = router.supplySender(networkRouteId);
+                final MessageConsumer networkReply = handshake.networkReply();
                 final long newNetworkReplyId = supplyReplyId.applyAsLong(handshake.networkId());
                 final long newCorrelationId = handshake.correlationId();
                 this.timestampRequested = handshake.timestampRequested();
@@ -524,25 +529,25 @@ public final class ServerStreamFactory implements StreamFactory
                 if (timestampRequested)
                 {
                     doHttpBegin(
-                        newNetworkReply,
+                        networkReply,
                         networkRouteId,
                         newNetworkReplyId,
                         newCorrelationId,
                         applicationReplyTraceId,
-                        this::setHttpResponseHeadersWithTimestampExt);
+                        setHttpResponseHeadersWithTimestampExt);
                 }
                 else
                 {
                     doHttpBegin(
-                        newNetworkReply,
+                        networkReply,
                         networkRouteId,
                         newNetworkReplyId,
                         newCorrelationId,
                         applicationReplyTraceId,
-                        this::setHttpResponseHeaders);
+                        setHttpResponseHeaders);
                 }
 
-                this.networkReply = newNetworkReply;
+                this.networkReply = networkReply;
                 this.networkRouteId = networkRouteId;
                 this.networkReplyId = newNetworkReplyId;
 
@@ -617,7 +622,11 @@ public final class ServerStreamFactory implements StreamFactory
                 final DirectBuffer id = sseEndEx.id().value();
 
                 int flags = FIN | INIT;
-                final Consumer<Builder> payloadMutator = p -> p.set(visitSseEvent(flags, null, id, null, -1L, null));
+
+                final SseEventFW sseEvent = sseEventRW.wrap(writeBuffer, DataFW.FIELD_OFFSET_PAYLOAD, writeBuffer.capacity())
+                        .flags(flags)
+                        .id(id)
+                        .build();
 
                 final DataFW frame = dataRW.wrap(writeBuffer, 0, writeBuffer.capacity())
                     .routeId(networkRouteId)
@@ -626,7 +635,7 @@ public final class ServerStreamFactory implements StreamFactory
                     .flags(flags)
                     .groupId(0)
                     .padding(networkReplyPadding)
-                    .payload(payloadMutator)
+                    .payload(sseEvent.buffer(), sseEvent.offset(), sseEvent.sizeof())
                     .build();
 
                 if (networkReplyBudget >= frame.sizeof() + networkReplyPadding)
@@ -655,20 +664,6 @@ public final class ServerStreamFactory implements StreamFactory
         {
             final long traceId = abort.trace();
             doHttpAbort(networkReply, networkRouteId, networkReplyId, traceId);
-        }
-
-        private void setHttpResponseHeaders(
-            ListFW.Builder<HttpHeaderFW.Builder, HttpHeaderFW> headers)
-        {
-            headers.item(h -> h.name(":status").value("200"));
-            headers.item(h -> h.name("content-type").value("text/event-stream"));
-        }
-
-        private void setHttpResponseHeadersWithTimestampExt(
-            ListFW.Builder<HttpHeaderFW.Builder, HttpHeaderFW> headers)
-        {
-            headers.item(h -> h.name(":status").value("200"));
-            headers.item(h -> h.name("content-type").value("text/event-stream;ext=timestamp"));
         }
 
         private void handleThrottle(
@@ -765,6 +760,20 @@ public final class ServerStreamFactory implements StreamFactory
         }
     }
 
+    private void setHttpResponseHeaders(
+        ListFW.Builder<HttpHeaderFW.Builder, HttpHeaderFW> headers)
+    {
+        headers.item(h -> h.name(":status").value("200"));
+        headers.item(h -> h.name("content-type").value("text/event-stream"));
+    }
+
+    private void setHttpResponseHeadersWithTimestampExt(
+        ListFW.Builder<HttpHeaderFW.Builder, HttpHeaderFW> headers)
+    {
+        headers.item(h -> h.name(":status").value("200"));
+        headers.item(h -> h.name("content-type").value("text/event-stream;ext=timestamp"));
+    }
+
     private void doHttpBegin(
         MessageConsumer receiver,
         long routeId,
@@ -807,7 +816,14 @@ public final class ServerStreamFactory implements StreamFactory
         long timestamp,
         DirectBuffer comment)
     {
-        final Consumer<Builder> payloadMutator = p -> p.set(visitSseEvent(flags, data, id, type, timestamp, comment));
+        final SseEventFW sseEvent = sseEventRW.wrap(writeBuffer, DataFW.FIELD_OFFSET_PAYLOAD, writeBuffer.capacity())
+                .flags(flags)
+                .timestamp(timestamp)
+                .id(id)
+                .type(type)
+                .data(data)
+                .comment(comment)
+                .build();
 
         final DataFW frame = dataRW.wrap(writeBuffer, 0, writeBuffer.capacity())
                 .routeId(routeId)
@@ -816,7 +832,7 @@ public final class ServerStreamFactory implements StreamFactory
                 .flags(flags)
                 .groupId(0)
                 .padding(padding)
-                .payload(payloadMutator)
+                .payload(sseEvent.buffer(), sseEvent.offset(), sseEvent.sizeof())
                 .build();
 
         receiver.accept(frame.typeId(), frame.buffer(), frame.offset(), frame.sizeof());
@@ -863,12 +879,17 @@ public final class ServerStreamFactory implements StreamFactory
         String pathInfo,
         String lastEventId)
     {
+        final SseBeginExFW sseBegin = sseBeginExRW.wrap(writeBuffer, BeginFW.FIELD_OFFSET_EXTENSION, writeBuffer.capacity())
+                .pathInfo(pathInfo)
+                .lastEventId(lastEventId)
+                .build();
+
         final BeginFW begin = beginRW.wrap(writeBuffer, 0, writeBuffer.capacity())
                 .routeId(routeId)
                 .streamId(streamId)
                 .trace(traceId)
                 .correlationId(correlationId)
-                .extension(e -> e.set(visitSseBeginEx(pathInfo, lastEventId)))
+                .extension(sseBegin.buffer(), sseBegin.offset(), sseBegin.sizeof())
                 .build();
 
         receiver.accept(begin.typeId(), begin.buffer(), begin.offset(), begin.sizeof());
@@ -915,29 +936,6 @@ public final class ServerStreamFactory implements StreamFactory
                        .lastEventId(lastEventId)
                        .build()
                        .sizeof();
-    }
-
-    private Flyweight.Builder.Visitor visitSseEvent(
-        int flags,
-        OctetsFW data,
-        DirectBuffer id,
-        DirectBuffer type,
-        long timestamp,
-        DirectBuffer comment)
-    {
-        // TODO: verify valid UTF-8 and no LF chars in payload
-        //       would require multiple "data:" lines in event
-
-        return (buffer, offset, limit) ->
-            sseEventRW.wrap(buffer, offset, limit)
-                      .flags(flags)
-                      .timestamp(timestamp)
-                      .id(id)
-                      .type(type)
-                      .data(data)
-                      .comment(comment)
-                      .build()
-                      .sizeof();
     }
 
     private void doWindow(
