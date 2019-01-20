@@ -38,8 +38,7 @@ public final class SseControllerFactorySpi implements ControllerFactorySpi<SseCo
         Configuration config,
         ControllerBuilder<SseController> builder)
     {
-        return builder.setName(name())
-                      .setFactory(SseController::new)
+        return builder.setFactory(SseController::new)
                       .build();
     }
 }
