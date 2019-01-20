@@ -105,7 +105,7 @@ public final class ServerStreamFactory implements StreamFactory
     private final RouteManager router;
     private final MutableDirectBuffer writeBuffer;
     private final BufferPool bufferPool;
-    private final LongSupplier supplyInitialId;
+    private final LongUnaryOperator supplyInitialId;
     private final LongUnaryOperator supplyReplyId;
     private final LongSupplier supplyTrace;
     private final LongSupplier supplyCorrelationId;
@@ -121,7 +121,7 @@ public final class ServerStreamFactory implements StreamFactory
         RouteManager router,
         MutableDirectBuffer writeBuffer,
         BufferPool bufferPool,
-        LongSupplier supplyInitialId,
+        LongUnaryOperator supplyInitialId,
         LongUnaryOperator supplyReplyId,
         LongSupplier supplyTrace,
         LongSupplier supplyCorrelationId,
@@ -215,9 +215,9 @@ public final class ServerStreamFactory implements StreamFactory
         private final long acceptRouteId;
         private final long acceptId;
 
-        private MessageConsumer connectTarget;
+        private MessageConsumer connectInitial;
         private long connectRouteId;
-        private long connectId;
+        private long connectInitialId;
 
         private MessageConsumer streamState;
 
@@ -349,9 +349,9 @@ public final class ServerStreamFactory implements StreamFactory
                 final SseRouteExFW sseRouteEx = route.extension().get(sseRouteExRO::wrap);
 
                 final long connectRouteId = route.correlationId();
-                final long newConnectId = supplyInitialId.getAsLong();
+                final long connectInitialId = supplyInitialId.applyAsLong(connectRouteId);
                 final long newCorrelationId = supplyCorrelationId.getAsLong();
-                final MessageConsumer connectTarget = router.supplyReceiver(connectRouteId);
+                final MessageConsumer connectInitial = router.supplyReceiver(connectInitialId);
 
                 final boolean timestampRequested = httpBeginEx.headers().anyMatch(header ->
                     "accept".equals(header.name().asString()) && header.value().asString().contains("ext=timestamp"));
@@ -366,13 +366,13 @@ public final class ServerStreamFactory implements StreamFactory
 
                 correlations.put(newCorrelationId, handshake);
 
-                router.setThrottle(newConnectId, this::handleThrottle);
-                doSseBegin(connectTarget, connectRouteId, newConnectId, traceId,
+                router.setThrottle(connectInitialId, this::handleThrottle);
+                doSseBegin(connectInitial, connectRouteId, connectInitialId, traceId,
                         newCorrelationId, pathInfo, lastEventId);
 
                 this.connectRouteId = connectRouteId;
-                this.connectTarget = connectTarget;
-                this.connectId = newConnectId;
+                this.connectInitialId = connectInitialId;
+                this.connectInitial = connectInitial;
             }
             else
             {
@@ -386,7 +386,7 @@ public final class ServerStreamFactory implements StreamFactory
             EndFW end)
         {
             final long traceId = end.trace();
-            doSseEnd(connectTarget, connectRouteId, connectId, traceId);
+            doSseEnd(connectInitial, connectRouteId, connectInitialId, traceId);
         }
 
         private void handleAbort(
@@ -394,7 +394,7 @@ public final class ServerStreamFactory implements StreamFactory
         {
             final long traceId = abort.trace();
             // TODO: SseAbortEx
-            doSseAbort(connectTarget, connectRouteId, connectId, traceId);
+            doSseAbort(connectInitial, connectRouteId, connectInitialId, traceId);
         }
 
         private void handleThrottle(
