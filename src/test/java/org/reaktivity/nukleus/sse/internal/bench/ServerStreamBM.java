@@ -130,7 +130,7 @@ public class ServerStreamBM
 //                .setGroupIdSupplier(() -> ++groupId.value)
 //                .setRouteManager(router)
 //                .setInitialIdSupplier(() -> ++streamId.value)
-//                .setReplyIdSupplier(initial -> initial | 0x8000_0000_0000_0000L)
+//                .setReplyIdSupplier(initial -> initial & 0xffff_ffff_ffff_fffeL)
 //                .setTraceSupplier(() -> ++traceId.value)
 //                .setWriteBuffer(writeBuffer)
 //                .build();
