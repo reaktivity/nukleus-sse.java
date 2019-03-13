@@ -17,6 +17,8 @@ package org.reaktivity.nukleus.sse.internal.control;
 
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.junit.rules.RuleChain.outerRule;
+import static org.reaktivity.nukleus.route.RouteKind.CLIENT;
+import static org.reaktivity.nukleus.route.RouteKind.SERVER;
 
 import org.junit.Rule;
 import org.junit.Test;
@@ -28,6 +30,9 @@ import org.kaazing.k3po.junit.annotation.Specification;
 import org.kaazing.k3po.junit.rules.K3poRule;
 import org.reaktivity.nukleus.sse.internal.SseController;
 import org.reaktivity.reaktor.test.ReaktorRule;
+
+import com.google.gson.Gson;
+import com.google.gson.JsonObject;
 
 public class ControllerIT
 {
@@ -48,6 +53,8 @@ public class ControllerIT
     @Rule
     public final TestRule chain = outerRule(k3po).around(timeout).around(reaktor);
 
+    private final Gson gson = new Gson();
+
     @Test
     @Specification({
         "${route}/server/nukleus"
@@ -56,8 +63,11 @@ public class ControllerIT
     {
         k3po.start();
 
+        final JsonObject extension = new JsonObject();
+        extension.addProperty("pathInfo", "/events");
+
         reaktor.controller(SseController.class)
-               .routeServer("sse#0", "target#0", "/events")
+               .route(SERVER, "sse#0", "target#0", gson.toJson(extension))
                .get();
 
         k3po.finish();
@@ -71,8 +81,11 @@ public class ControllerIT
     {
         k3po.start();
 
+        final JsonObject extension = new JsonObject();
+        extension.addProperty("pathInfo", "/events");
+
         reaktor.controller(SseController.class)
-               .routeClient("sse#0", "target#0", "/events")
+               .route(CLIENT, "sse#0", "target#0", gson.toJson(extension))
                .get();
 
         k3po.finish();
@@ -87,8 +100,11 @@ public class ControllerIT
     {
         k3po.start();
 
+        final JsonObject extension = new JsonObject();
+        extension.addProperty("pathInfo", "/events");
+
         long routeId = reaktor.controller(SseController.class)
-                  .routeServer("sse#0", "target#0", "/events")
+                  .route(SERVER, "sse#0", "target#0", gson.toJson(extension))
                   .get();
 
         k3po.notifyBarrier("ROUTED_SERVER");
@@ -109,8 +125,11 @@ public class ControllerIT
     {
         k3po.start();
 
+        final JsonObject extension = new JsonObject();
+        extension.addProperty("pathInfo", "/events");
+
         long routeId = reaktor.controller(SseController.class)
-                  .routeClient("sse#0", "target#0", "/events")
+                  .route(CLIENT, "sse#0", "target#0", gson.toJson(extension))
                   .get();
 
         k3po.notifyBarrier("ROUTED_CLIENT");
