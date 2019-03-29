@@ -1,5 +1,5 @@
 /**
- * Copyright 2016-2018 The Reaktivity Project
+ * Copyright 2016-2019 The Reaktivity Project
  *
  * The Reaktivity Project licenses this file to you under the Apache License,
  * version 2.0 (the "License"); you may not use this file except in compliance
@@ -22,7 +22,6 @@ public final class ServerHandshake
     private final MessageConsumer networkReply;
     private final long networkRouteId;
     private final long networkInitialId;
-    private final long correlationId;
     private final long applicationRouteId;
     private final boolean timestampRequested;
 
@@ -30,14 +29,12 @@ public final class ServerHandshake
         MessageConsumer networkReply,
         long networkRouteId,
         long networkInitialId,
-        long correlationId,
         long applicationRouteId,
         boolean timestampRequested)
     {
         this.networkReply = networkReply;
         this.networkRouteId = networkRouteId;
         this.networkInitialId = networkInitialId;
-        this.correlationId = correlationId;
         this.applicationRouteId = applicationRouteId;
         this.timestampRequested = timestampRequested;
     }
@@ -55,11 +52,6 @@ public final class ServerHandshake
     public long networkId()
     {
         return networkInitialId;
-    }
-
-    public long correlationId()
-    {
-        return correlationId;
     }
 
     public long applicationRouteId()
