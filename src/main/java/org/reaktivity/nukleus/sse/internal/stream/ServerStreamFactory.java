@@ -108,7 +108,6 @@ public final class ServerStreamFactory implements StreamFactory
     private final LongUnaryOperator supplyInitialId;
     private final LongUnaryOperator supplyReplyId;
     private final LongSupplier supplyTrace;
-    private final LongSupplier supplyCorrelationId;
     private final DirectBuffer initialComment;
 
     private final Long2ObjectHashMap<ServerHandshake> correlations;
@@ -124,7 +123,6 @@ public final class ServerStreamFactory implements StreamFactory
         LongUnaryOperator supplyInitialId,
         LongUnaryOperator supplyReplyId,
         LongSupplier supplyTrace,
-        LongSupplier supplyCorrelationId,
         Long2ObjectHashMap<ServerHandshake> correlations)
     {
         this.router = requireNonNull(router);
@@ -133,7 +131,6 @@ public final class ServerStreamFactory implements StreamFactory
         this.supplyInitialId = requireNonNull(supplyInitialId);
         this.supplyReplyId = requireNonNull(supplyReplyId);
         this.supplyTrace = requireNonNull(supplyTrace);
-        this.supplyCorrelationId = requireNonNull(supplyCorrelationId);
         this.correlations = requireNonNull(correlations);
         this.wrapRoute = this::wrapRoute;
         this.initialComment = config.initialComment();
@@ -285,7 +282,6 @@ public final class ServerStreamFactory implements StreamFactory
             BeginFW begin)
         {
             final long acceptRouteId = begin.routeId();
-            final long correlationId = begin.correlationId();
             final OctetsFW extension = begin.extension();
             final long traceId = begin.trace();
 
@@ -350,7 +346,7 @@ public final class ServerStreamFactory implements StreamFactory
 
                 final long connectRouteId = route.correlationId();
                 final long connectInitialId = supplyInitialId.applyAsLong(connectRouteId);
-                final long newCorrelationId = supplyCorrelationId.getAsLong();
+                final long connectReplyId = supplyReplyId.applyAsLong(connectInitialId);
                 final MessageConsumer connectInitial = router.supplyReceiver(connectInitialId);
 
                 final boolean timestampRequested = httpBeginEx.headers().anyMatch(header ->
@@ -360,15 +356,14 @@ public final class ServerStreamFactory implements StreamFactory
                     acceptReply,
                     acceptRouteId,
                     acceptId,
-                    correlationId,
                     connectRouteId,
                     timestampRequested);
 
-                correlations.put(newCorrelationId, handshake);
+                correlations.put(connectReplyId, handshake);
 
                 router.setThrottle(connectInitialId, this::handleThrottle);
                 doSseBegin(connectInitial, connectRouteId, connectInitialId, traceId,
-                        newCorrelationId, pathInfo, lastEventId);
+                        pathInfo, lastEventId);
 
                 this.connectRouteId = connectRouteId;
                 this.connectInitialId = connectInitialId;
@@ -512,9 +507,9 @@ public final class ServerStreamFactory implements StreamFactory
             BeginFW begin)
         {
             final long applicationReplyTraceId = begin.trace();
-            final long correlationId = begin.correlationId();
+            final long applicationReplyId = begin.streamId();
 
-            final ServerHandshake handshake = correlations.remove(correlationId);
+            final ServerHandshake handshake = correlations.remove(applicationReplyId);
 
             if (handshake != null)
             {
@@ -522,7 +517,6 @@ public final class ServerStreamFactory implements StreamFactory
 
                 final MessageConsumer networkReply = handshake.networkReply();
                 final long newNetworkReplyId = supplyReplyId.applyAsLong(handshake.networkId());
-                final long newCorrelationId = handshake.correlationId();
                 this.timestampRequested = handshake.timestampRequested();
 
                 router.setThrottle(newNetworkReplyId, this::handleThrottle);
@@ -532,7 +526,6 @@ public final class ServerStreamFactory implements StreamFactory
                         networkReply,
                         networkRouteId,
                         newNetworkReplyId,
-                        newCorrelationId,
                         applicationReplyTraceId,
                         setHttpResponseHeadersWithTimestampExt);
                 }
@@ -542,7 +535,6 @@ public final class ServerStreamFactory implements StreamFactory
                         networkReply,
                         networkRouteId,
                         newNetworkReplyId,
-                        newCorrelationId,
                         applicationReplyTraceId,
                         setHttpResponseHeaders);
                 }
@@ -778,7 +770,6 @@ public final class ServerStreamFactory implements StreamFactory
         MessageConsumer receiver,
         long routeId,
         long streamId,
-        long correlationId,
         long traceId,
         Consumer<ListFW.Builder<HttpHeaderFW.Builder, HttpHeaderFW>> mutator)
     {
@@ -786,7 +777,6 @@ public final class ServerStreamFactory implements StreamFactory
                 .routeId(routeId)
                 .streamId(streamId)
                 .trace(traceId)
-                .correlationId(correlationId)
                 .extension(e -> e.set(visitHttpBeginEx(mutator)))
                 .build();
 
@@ -875,7 +865,6 @@ public final class ServerStreamFactory implements StreamFactory
         long routeId,
         long streamId,
         long traceId,
-        long correlationId,
         String pathInfo,
         String lastEventId)
     {
@@ -888,7 +877,6 @@ public final class ServerStreamFactory implements StreamFactory
                 .routeId(routeId)
                 .streamId(streamId)
                 .trace(traceId)
-                .correlationId(correlationId)
                 .extension(sseBegin.buffer(), sseBegin.offset(), sseBegin.sizeof())
                 .build();
 
@@ -924,18 +912,6 @@ public final class ServerStreamFactory implements StreamFactory
                 .build();
 
         receiver.accept(end.typeId(), end.buffer(), end.offset(), end.sizeof());
-    }
-
-    private Flyweight.Builder.Visitor visitSseBeginEx(
-        String pathInfo,
-        String lastEventId)
-    {
-        return (buffer, offset, limit) ->
-            sseBeginExRW.wrap(buffer, offset, limit)
-                       .pathInfo(pathInfo)
-                       .lastEventId(lastEventId)
-                       .build()
-                       .sizeof();
     }
 
     private void doWindow(

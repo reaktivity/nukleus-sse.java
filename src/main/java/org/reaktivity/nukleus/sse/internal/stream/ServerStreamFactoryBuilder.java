@@ -40,7 +40,6 @@ public final class ServerStreamFactoryBuilder implements StreamFactoryBuilder
     private LongUnaryOperator supplyReplyId;
     private LongSupplier supplyTrace;
     private Supplier<BufferPool> supplyBufferPool;
-    private LongSupplier supplyCorrelationId;
 
     public ServerStreamFactoryBuilder(
         SseConfiguration config)
@@ -104,14 +103,6 @@ public final class ServerStreamFactoryBuilder implements StreamFactoryBuilder
     }
 
     @Override
-    public ServerStreamFactoryBuilder setTargetCorrelationIdSupplier(
-        LongSupplier supplyCorrelationId)
-    {
-        this.supplyCorrelationId = supplyCorrelationId;
-        return this;
-    }
-
-    @Override
     public StreamFactoryBuilder setBufferPoolSupplier(
         Supplier<BufferPool> supplyBufferPool)
     {
@@ -130,7 +121,6 @@ public final class ServerStreamFactoryBuilder implements StreamFactoryBuilder
                 supplyInitialId,
                 supplyReplyId,
                 supplyTrace,
-                supplyCorrelationId,
                 correlations);
     }
 }
