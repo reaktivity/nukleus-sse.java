@@ -317,7 +317,7 @@
               </transformers>
               <artifactSet>
                 <includes>
-                  <include>org.agrona:Agrona</include>
+                  <include>org.agrona:agrona</include>
                   <include>org.reaktivity:nukleus</include>
                   <include>org.reaktivity:reaktor</include>
                   <include>org.openjdk.jmh:jmh-core</include>
