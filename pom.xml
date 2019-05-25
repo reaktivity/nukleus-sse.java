@@ -6,7 +6,7 @@
   <modelVersion>4.0.0</modelVersion>
   <groupId>org.reaktivity</groupId>
   <artifactId>nukleus-sse</artifactId>
-  <version>0.43</version>
+  <version>0.44</version>
   <name>SSE Nukleus Implementation</name>
   <description>SSE Nukleus Implementation</description>
   <url>https://github.com/reaktivity/nukleus-sse.java</url>
@@ -317,7 +317,7 @@
               </transformers>
               <artifactSet>
                 <includes>
-                  <include>org.agrona:Agrona</include>
+                  <include>org.agrona:agrona</include>
                   <include>org.reaktivity:nukleus</include>
                   <include>org.reaktivity:reaktor</include>
                   <include>org.openjdk.jmh:jmh-core</include>
