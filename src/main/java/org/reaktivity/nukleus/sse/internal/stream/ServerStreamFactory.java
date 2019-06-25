@@ -29,6 +29,7 @@ import java.util.Map;
 import java.util.function.Consumer;
 import java.util.function.LongSupplier;
 import java.util.function.LongUnaryOperator;
+import java.util.function.ToIntFunction;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -41,6 +42,7 @@ import org.reaktivity.nukleus.function.MessageFunction;
 import org.reaktivity.nukleus.function.MessagePredicate;
 import org.reaktivity.nukleus.route.RouteManager;
 import org.reaktivity.nukleus.sse.internal.SseConfiguration;
+import org.reaktivity.nukleus.sse.internal.SseNukleus;
 import org.reaktivity.nukleus.sse.internal.types.Flyweight;
 import org.reaktivity.nukleus.sse.internal.types.HttpHeaderFW;
 import org.reaktivity.nukleus.sse.internal.types.ListFW;
@@ -62,6 +64,8 @@ import org.reaktivity.nukleus.stream.StreamFactory;
 
 public final class ServerStreamFactory implements StreamFactory
 {
+    private static final String HTTP_TYPE_NAME = "http";
+
     private static final Pattern QUERY_PARAMS_PATTERN = Pattern.compile("(?<path>[^?]*)(?<query>[\\?].*)");
     private static final Pattern LAST_EVENT_ID_PATTERN = Pattern.compile("(\\?|&)lastEventId=(?<lastEventId>[^&]*)(&|$)");
 
@@ -107,8 +111,10 @@ public final class ServerStreamFactory implements StreamFactory
     private final BufferPool bufferPool;
     private final LongUnaryOperator supplyInitialId;
     private final LongUnaryOperator supplyReplyId;
-    private final LongSupplier supplyTrace;
+    private final LongSupplier supplyTraceId;
     private final DirectBuffer initialComment;
+    private final int httpTypeId;
+    private final int sseTypeId;
 
     private final Long2ObjectHashMap<ServerHandshake> correlations;
     private final MessageFunction<RouteFW> wrapRoute;
@@ -122,7 +128,8 @@ public final class ServerStreamFactory implements StreamFactory
         BufferPool bufferPool,
         LongUnaryOperator supplyInitialId,
         LongUnaryOperator supplyReplyId,
-        LongSupplier supplyTrace,
+        LongSupplier supplyTraceId,
+        ToIntFunction<String> supplyTypeId,
         Long2ObjectHashMap<ServerHandshake> correlations)
     {
         this.router = requireNonNull(router);
@@ -130,10 +137,12 @@ public final class ServerStreamFactory implements StreamFactory
         this.bufferPool = requireNonNull(bufferPool);
         this.supplyInitialId = requireNonNull(supplyInitialId);
         this.supplyReplyId = requireNonNull(supplyReplyId);
-        this.supplyTrace = requireNonNull(supplyTrace);
+        this.supplyTraceId = requireNonNull(supplyTraceId);
         this.correlations = requireNonNull(correlations);
         this.wrapRoute = this::wrapRoute;
         this.initialComment = config.initialComment();
+        this.httpTypeId = supplyTypeId.applyAsInt(HTTP_TYPE_NAME);
+        this.sseTypeId = supplyTypeId.applyAsInt(SseNukleus.NAME);
         this.setHttpResponseHeaders = this::setHttpResponseHeaders;
         this.setHttpResponseHeadersWithTimestampExt = this::setHttpResponseHeadersWithTimestampExt;
     }
@@ -570,7 +579,7 @@ public final class ServerStreamFactory implements StreamFactory
             if (applicationReplyBudget < 0)
             {
                 doReset(applicationReplyThrottle, applicationRouteId, applicationReplyId);
-                doSseAbort(networkReply, networkRouteId, networkReplyId, supplyTrace.getAsLong(), authorization);
+                doSseAbort(networkReply, networkRouteId, networkReplyId, supplyTraceId.getAsLong(), authorization);
             }
             else
             {
@@ -708,7 +717,7 @@ public final class ServerStreamFactory implements StreamFactory
                             networkReply,
                             networkRouteId,
                             networkReplyId,
-                            supplyTrace.getAsLong(),
+                            supplyTraceId.getAsLong(),
                             0L,
                             FIN | INIT,
                             networkReplyPadding,
@@ -804,6 +813,7 @@ public final class ServerStreamFactory implements StreamFactory
     {
         return (buffer, offset, limit) ->
             httpBeginExRW.wrap(buffer, offset, limit)
+                         .typeId(httpTypeId)
                          .headers(headers)
                          .build()
                          .sizeof();
@@ -892,6 +902,7 @@ public final class ServerStreamFactory implements StreamFactory
         String lastEventId)
     {
         final SseBeginExFW sseBegin = sseBeginExRW.wrap(writeBuffer, BeginFW.FIELD_OFFSET_EXTENSION, writeBuffer.capacity())
+                .typeId(sseTypeId)
                 .pathInfo(pathInfo)
                 .lastEventId(lastEventId)
                 .build();
@@ -985,7 +996,7 @@ public final class ServerStreamFactory implements StreamFactory
         final long routeId,
         final long streamId)
     {
-        doReset(sender, routeId, streamId, supplyTrace.getAsLong());
+        doReset(sender, routeId, streamId, supplyTraceId.getAsLong());
     }
 
     private static String decodeLastEventId(
