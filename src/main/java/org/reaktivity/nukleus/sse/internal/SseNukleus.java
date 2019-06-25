@@ -17,9 +17,9 @@ package org.reaktivity.nukleus.sse.internal;
 
 import org.reaktivity.nukleus.Nukleus;
 
-final class SseNukleus implements Nukleus
+public final class SseNukleus implements Nukleus
 {
-    static final String NAME = "sse";
+    public static final String NAME = "sse";
 
     private final SseConfiguration config;
 
