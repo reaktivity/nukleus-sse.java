@@ -6,7 +6,7 @@
   <modelVersion>4.0.0</modelVersion>
   <groupId>org.reaktivity</groupId>
   <artifactId>nukleus-sse</artifactId>
-  <version>0.45</version>
+  <version>0.46</version>
   <name>SSE Nukleus Implementation</name>
   <description>SSE Nukleus Implementation</description>
   <url>https://github.com/reaktivity/nukleus-sse.java</url>
@@ -42,7 +42,7 @@
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
     <checkstyle.config.location>src/conf/checkstyle/configuration.xml</checkstyle.config.location>
     <checkstyle.suppressions.location>src/conf/checkstyle/suppressions.xml</checkstyle.suppressions.location>
-    <jacoco.coverage.ratio>0.39</jacoco.coverage.ratio>
+    <jacoco.coverage.ratio>0.38</jacoco.coverage.ratio>
     <jacoco.missed.count>53</jacoco.missed.count>
 
     <junit.version>4.12</junit.version>
@@ -54,7 +54,7 @@
 
     <nukleus.plugin.version>0.33</nukleus.plugin.version>
 
-    <nukleus.sse.spec.version>0.33</nukleus.sse.spec.version>
+    <nukleus.sse.spec.version>0.34</nukleus.sse.spec.version>
     <reaktor.version>0.93</reaktor.version>
   </properties>
 
