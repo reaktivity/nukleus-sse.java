@@ -56,6 +56,7 @@ import org.reaktivity.nukleus.sse.internal.types.stream.DataFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.EndFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.HttpBeginExFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.ResetFW;
+import org.reaktivity.nukleus.sse.internal.types.stream.SignalFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.SseBeginExFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.SseDataExFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.SseEndExFW;
@@ -103,6 +104,8 @@ public final class ServerStreamFactory implements StreamFactory
 
     private final SseDataExFW sseDataExRO = new SseDataExFW();
     private final SseEndExFW sseEndExRO = new SseEndExFW();
+
+//    private final OAuthSignalExFW signalExRO = new OAuthSignalExFW();
 
     private final SseEventFW.Builder sseEventRW = new SseEventFW.Builder();
 
@@ -695,6 +698,7 @@ public final class ServerStreamFactory implements StreamFactory
                 final ResetFW reset = resetRO.wrap(buffer, index, index + length);
                 handleReset(reset);
                 break;
+            // TODO: add signal handling and OAuthSignalEx handling here
             default:
                 // ignore
                 break;
@@ -997,6 +1001,18 @@ public final class ServerStreamFactory implements StreamFactory
         final long streamId)
     {
         doReset(sender, routeId, streamId, supplyTraceId.getAsLong());
+    }
+
+    private void doOAuthSignal(
+        final MessageConsumer sender,
+        final long routeId,
+        final long streamId,
+        final long traceId)
+    {
+//        final SignalFW signal = resetRW.wrap(writeBuffer, 0, writeBuffer.capacity())
+//                .build();
+        final SignalFW signal = new SignalFW();
+        sender.accept(signal.typeId(), signal.buffer(), signal.offset(), signal.sizeof());
     }
 
     private static String decodeLastEventId(
