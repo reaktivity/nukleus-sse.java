@@ -340,11 +340,11 @@ public final class ServerStreamFactory implements StreamFactory
             final MessagePredicate filter = (t, b, o, l) ->
             {
                 final RouteFW route = routeRO.wrap(b, o, o + l);
-                final SseRouteExFW routeEx = route.extension().get(sseRouteExRO::wrap);
-                final String routePathInfo = routeEx.pathInfo().asString();
+                final SseRouteExFW routeEx = route.extension().get(sseRouteExRO::tryWrap);
+                final String routePathInfo = routeEx != null ? routeEx.pathInfo().asString() : null;
 
                 // TODO: process pathInfo matching
-                //       && acceptPathInfo.startsWith(pathInfo);
+                //       && pathInfo.startsWith(routePathInfo);
                 return true;
             };
 
