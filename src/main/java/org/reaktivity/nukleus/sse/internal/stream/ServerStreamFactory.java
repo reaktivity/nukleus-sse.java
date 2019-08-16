@@ -62,10 +62,12 @@ import org.reaktivity.nukleus.sse.internal.types.stream.SseDataExFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.SseEndExFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.WindowFW;
 import org.reaktivity.nukleus.stream.StreamFactory;
+import org.reaktivity.specification.oauth.internal.types.stream.HttpSignalExFW;
 
 public final class ServerStreamFactory implements StreamFactory
 {
     private static final String HTTP_TYPE_NAME = "http";
+    private static final String CHALLENGE_TYPE_NAME = "challenge";
 
     private static final Pattern QUERY_PARAMS_PATTERN = Pattern.compile("(?<path>[^?]*)(?<query>[\\?].*)");
     private static final Pattern LAST_EVENT_ID_PATTERN = Pattern.compile("(\\?|&)lastEventId=(?<lastEventId>[^&]*)(&|$)");
@@ -93,6 +95,7 @@ public final class ServerStreamFactory implements StreamFactory
 
     private final WindowFW windowRO = new WindowFW();
     private final ResetFW resetRO = new ResetFW();
+    private final SignalFW signalRO = new SignalFW();
 
     private final SseBeginExFW.Builder sseBeginExRW = new SseBeginExFW.Builder();
 
@@ -102,10 +105,11 @@ public final class ServerStreamFactory implements StreamFactory
     private final HttpBeginExFW httpBeginExRO = new HttpBeginExFW();
     private final HttpBeginExFW.Builder httpBeginExRW = new HttpBeginExFW.Builder();
 
+    private final HttpSignalExFW httpSignalExRO = new HttpSignalExFW();
+    private final HttpSignalExFW.Builder httpSignalExRW = new HttpSignalExFW.Builder();
+
     private final SseDataExFW sseDataExRO = new SseDataExFW();
     private final SseEndExFW sseEndExRO = new SseEndExFW();
-
-//    private final OAuthSignalExFW signalExRO = new OAuthSignalExFW();
 
     private final SseEventFW.Builder sseEventRW = new SseEventFW.Builder();
 
@@ -698,7 +702,10 @@ public final class ServerStreamFactory implements StreamFactory
                 final ResetFW reset = resetRO.wrap(buffer, index, index + length);
                 handleReset(reset);
                 break;
-            // TODO: add signal handling and OAuthSignalEx handling here
+            case SignalFW.TYPE_ID:
+                final SignalFW signal = signalRO.wrap(buffer, index, index + length);
+                handleSignal(signal);
+                break;
             default:
                 // ignore
                 break;
@@ -776,6 +783,24 @@ public final class ServerStreamFactory implements StreamFactory
         {
             final long traceId = reset.trace();
             doReset(applicationReplyThrottle, applicationRouteId, applicationReplyId, traceId);
+        }
+
+        // TODO - SseEventFW
+        //                  .type = "challenge"
+        //                  .payload = "{}"
+        // Received signalEx CHALLENGE from OAuth
+        private void handleSignal(
+            SignalFW signal)
+        {
+            final HttpSignalExFW httpSignalEx = httpSignalExRO.tryWrap(signal.buffer(),
+                                                                       signal.extension().offset(),
+                                                                       signal.extension().limit());
+            if (httpSignalEx != null)
+            {
+//                final SseEventFW sseEvent = sseEventRW.wrap(writeBuffer, DataFW.FIELD_OFFSET_PAYLOAD, writeBuffer.capacity())
+//                        .type(CHALLENGE_TYPE_NAME)
+//                        .build();
+            }
         }
     }
 
@@ -1001,18 +1026,6 @@ public final class ServerStreamFactory implements StreamFactory
         final long streamId)
     {
         doReset(sender, routeId, streamId, supplyTraceId.getAsLong());
-    }
-
-    private void doOAuthSignal(
-        final MessageConsumer sender,
-        final long routeId,
-        final long streamId,
-        final long traceId)
-    {
-//        final SignalFW signal = resetRW.wrap(writeBuffer, 0, writeBuffer.capacity())
-//                .build();
-        final SignalFW signal = new SignalFW();
-        sender.accept(signal.typeId(), signal.buffer(), signal.offset(), signal.sizeof());
     }
 
     private static String decodeLastEventId(
