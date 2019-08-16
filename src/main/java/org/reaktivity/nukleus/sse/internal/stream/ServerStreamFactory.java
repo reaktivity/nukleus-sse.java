@@ -26,8 +26,6 @@ import java.io.UnsupportedEncodingException;
 import java.net.URLDecoder;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
-import java.util.LinkedList;
-import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
 import java.util.function.LongSupplier;
@@ -52,6 +50,7 @@ import org.reaktivity.nukleus.sse.internal.types.Flyweight;
 import org.reaktivity.nukleus.sse.internal.types.HttpHeaderFW;
 import org.reaktivity.nukleus.sse.internal.types.ListFW;
 import org.reaktivity.nukleus.sse.internal.types.OctetsFW;
+import org.reaktivity.nukleus.sse.internal.types.StringFW;
 import org.reaktivity.nukleus.sse.internal.types.codec.SseEventFW;
 import org.reaktivity.nukleus.sse.internal.types.control.RouteFW;
 import org.reaktivity.nukleus.sse.internal.types.control.SseRouteExFW;
@@ -84,6 +83,9 @@ public final class ServerStreamFactory implements StreamFactory
             6 +         // event:
             16 +        // event string
             3;          // \n for data:, id:, event
+
+    private final StringFW.Builder stringRW = new StringFW.Builder();
+    private final OctetsFW.Builder octetsRW = new OctetsFW.Builder();
 
     private final RouteFW routeRO = new RouteFW();
     private final SseRouteExFW sseRouteExRO = new SseRouteExFW();
@@ -794,7 +796,7 @@ public final class ServerStreamFactory implements StreamFactory
 
         // TODO - SseEventFW
         //                  .type = "challenge"
-        //                  .payload = "{}"
+        //                  .data = "{}"
         // Received signalEx CHALLENGE from OAuth
         private void handleSignal(
             SignalFW signal)
@@ -802,22 +804,33 @@ public final class ServerStreamFactory implements StreamFactory
             final HttpSignalExFW httpSignalEx = httpSignalExRO.tryWrap(signal.buffer(),
                                                                        signal.extension().offset(),
                                                                        signal.extension().limit());
-            if (httpSignalEx != null)
+            if (httpSignalEx != null && signal.extension().sizeof() == httpSignalExRO.limit())
             {
                 final ListFW<HttpHeaderFW> httpHeaders = httpSignalEx.headers();
                 final Map<String, String> collectedHeaders = new HashMap<>();
                 httpHeaders.forEach(header -> collectedHeaders.put(header.name().asString(), header.value().asString()));
 
+                // TODO: need ":method" -> "method"
                 final JsonObject jsonHeaders = new JsonObject();
                 collectedHeaders.forEach(jsonHeaders::addProperty);
                 final String headersPayload = gson.toJson(jsonHeaders);
 
                 final JsonObject payload = new JsonObject();
-                payload.addProperty("method", "post");
                 payload.addProperty("headers", headersPayload);
-//                final SseEventFW sseEvent = sseEventRW.wrap(writeBuffer, DataFW.FIELD_OFFSET_PAYLOAD, writeBuffer.capacity())
-//                        .type(CHALLENGE_TYPE_NAME)
-//                        .build();
+                final String jsonPayload = gson.toJson(payload);
+
+                final StringFW challengeType = stringRW.wrap(writeBuffer, 0, writeBuffer.capacity())
+                        .set("challenge", UTF_8)
+                        .build();
+                final StringFW data = stringRW.wrap(writeBuffer, 0, writeBuffer.capacity())
+                        .set(jsonPayload, UTF_8)
+                        .build();
+                final OctetsFW challengeData = octetsRW.set(data.buffer(), 0, data.limit()).build();
+
+                final SseEventFW sseEvent = sseEventRW.wrap(writeBuffer, DataFW.FIELD_OFFSET_PAYLOAD, writeBuffer.capacity())
+                        .type(challengeType.value())
+                        .data(challengeData)
+                        .build();
             }
         }
     }
