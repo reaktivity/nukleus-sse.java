@@ -352,7 +352,7 @@ public final class ServerStreamFactory implements StreamFactory
 
             if (route != null)
             {
-                final SseRouteExFW sseRouteEx = route.extension().get(sseRouteExRO::wrap);
+                final SseRouteExFW sseRouteEx = route.extension().get(sseRouteExRO::tryWrap);
 
                 final long connectRouteId = route.correlationId();
                 final long connectInitialId = supplyInitialId.applyAsLong(connectRouteId);
