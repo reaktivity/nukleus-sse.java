@@ -24,7 +24,10 @@ import static org.reaktivity.nukleus.sse.internal.util.Flags.INIT;
 
 import java.io.UnsupportedEncodingException;
 import java.net.URLDecoder;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedList;
+import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
 import java.util.function.LongSupplier;
@@ -33,6 +36,8 @@ import java.util.function.ToIntFunction;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import com.google.gson.Gson;
+import com.google.gson.JsonObject;
 import org.agrona.DirectBuffer;
 import org.agrona.MutableDirectBuffer;
 import org.agrona.collections.Long2ObjectHashMap;
@@ -55,6 +60,7 @@ import org.reaktivity.nukleus.sse.internal.types.stream.BeginFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.DataFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.EndFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.HttpBeginExFW;
+import org.reaktivity.nukleus.sse.internal.types.stream.HttpSignalExFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.ResetFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.SignalFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.SseBeginExFW;
@@ -62,7 +68,6 @@ import org.reaktivity.nukleus.sse.internal.types.stream.SseDataExFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.SseEndExFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.WindowFW;
 import org.reaktivity.nukleus.stream.StreamFactory;
-import org.reaktivity.specification.oauth.internal.types.stream.HttpSignalExFW;
 
 public final class ServerStreamFactory implements StreamFactory
 {
@@ -122,6 +127,8 @@ public final class ServerStreamFactory implements StreamFactory
     private final DirectBuffer initialComment;
     private final int httpTypeId;
     private final int sseTypeId;
+
+    private final Gson gson = new Gson();
 
     private final Long2ObjectHashMap<ServerHandshake> correlations;
     private final MessageFunction<RouteFW> wrapRoute;
@@ -797,6 +804,17 @@ public final class ServerStreamFactory implements StreamFactory
                                                                        signal.extension().limit());
             if (httpSignalEx != null)
             {
+                final ListFW<HttpHeaderFW> httpHeaders = httpSignalEx.headers();
+                final Map<String, String> collectedHeaders = new HashMap<>();
+                httpHeaders.forEach(header -> collectedHeaders.put(header.name().asString(), header.value().asString()));
+
+                final JsonObject jsonHeaders = new JsonObject();
+                collectedHeaders.forEach(jsonHeaders::addProperty);
+                final String headersPayload = gson.toJson(jsonHeaders);
+
+                final JsonObject payload = new JsonObject();
+                payload.addProperty("method", "post");
+                payload.addProperty("headers", headersPayload);
 //                final SseEventFW sseEvent = sseEventRW.wrap(writeBuffer, DataFW.FIELD_OFFSET_PAYLOAD, writeBuffer.capacity())
 //                        .type(CHALLENGE_TYPE_NAME)
 //                        .build();
