@@ -74,7 +74,8 @@ import org.reaktivity.nukleus.stream.StreamFactory;
 public final class ServerStreamFactory implements StreamFactory
 {
     private static final String HTTP_TYPE_NAME = "http";
-    private static final String CHALLENGE_TYPE_NAME = "challenge";
+
+    private static final UnsafeBuffer CHALLENGE_TYPE = new UnsafeBuffer("challenge".getBytes(UTF_8));
 
     private static final StringFW HEADER_NAME_METHOD = initStringFW(":method");
     private static final StringFW HEADER_NAME_STATUS = initStringFW(":status");
@@ -818,10 +819,6 @@ public final class ServerStreamFactory implements StreamFactory
             doReset(applicationReplyThrottle, applicationRouteId, applicationReplyId, traceId);
         }
 
-        // TODO - SseEventFW
-        //                  .type = "challenge"
-        //                  .data = "{}"
-        // Received signalEx CHALLENGE from OAuth
         private void handleSignal(
             SignalFW signal)
         {
@@ -845,18 +842,10 @@ public final class ServerStreamFactory implements StreamFactory
                     }
                 });
                 challenge.addProperty("headers", gson.toJson(jsonHeaders));
-                final String jsonPayload = gson.toJson(challenge);
-
-                final StringFW challengeType = stringRW.wrap(writeBuffer, 0, writeBuffer.capacity())
-                        .set("challenge", UTF_8)
-                        .build();
-                final StringFW data = stringRW.wrap(writeBuffer, 0, writeBuffer.capacity())
-                        .set(jsonPayload, UTF_8)
-                        .build();
 
                 final SseEventFW sseEvent = sseEventRW.wrap(writeBuffer, DataFW.FIELD_OFFSET_PAYLOAD, writeBuffer.capacity())
-                        .type(challengeType.value())
-                        .data(data)
+                        .type(CHALLENGE_TYPE)
+                        .data(initStringFW(gson.toJson(challenge)))
                         .build();
 
                 final DataFW frame = dataRW.wrap(writeBuffer, 0, writeBuffer.capacity())
