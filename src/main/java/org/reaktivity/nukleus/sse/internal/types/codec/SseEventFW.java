@@ -123,7 +123,7 @@ public final class SseEventFW extends Flyweight
         }
 
         public Builder data(
-            OctetsFW data)
+            Flyweight data)
         {
             if (data != null)
             {

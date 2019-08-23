@@ -801,23 +801,27 @@ public final class ServerStreamFactory implements StreamFactory
         private void handleSignal(
             SignalFW signal)
         {
-            final HttpSignalExFW httpSignalEx = httpSignalExRO.tryWrap(signal.buffer(),
-                                                                       signal.extension().offset(),
-                                                                       signal.extension().limit());
-            if (httpSignalEx != null && signal.extension().sizeof() == httpSignalExRO.limit())
+            final HttpSignalExFW httpSignalEx = signal.extension().get(httpSignalExRO::tryWrap);
+            if (httpSignalEx != null)
             {
                 final ListFW<HttpHeaderFW> httpHeaders = httpSignalEx.headers();
-                final Map<String, String> collectedHeaders = new HashMap<>();
-                httpHeaders.forEach(header -> collectedHeaders.put(header.name().asString(), header.value().asString()));
+                final Map<String, String> challengeHeaders = new HashMap<>();
+                httpHeaders.forEach(header -> challengeHeaders.put(header.name().asString(), header.value().asString()));
 
-                // TODO: need ":method" -> "method"
                 final JsonObject jsonHeaders = new JsonObject();
-                collectedHeaders.forEach(jsonHeaders::addProperty);
-                final String headersPayload = gson.toJson(jsonHeaders);
-
-                final JsonObject payload = new JsonObject();
-                payload.addProperty("headers", headersPayload);
-                final String jsonPayload = gson.toJson(payload);
+                final JsonObject challenge = new JsonObject();
+                challengeHeaders.forEach((k, v) -> {
+                    if (!k.startsWith(":"))
+                    {
+                        jsonHeaders.addProperty(k, v);
+                    }
+                    else if (k.equals(":method"))
+                    {
+                        challenge.addProperty("method", v);
+                    }
+                });
+                challenge.addProperty("headers", gson.toJson(jsonHeaders));
+                final String jsonPayload = gson.toJson(challenge);
 
                 final StringFW challengeType = stringRW.wrap(writeBuffer, 0, writeBuffer.capacity())
                         .set("challenge", UTF_8)
@@ -825,12 +829,24 @@ public final class ServerStreamFactory implements StreamFactory
                 final StringFW data = stringRW.wrap(writeBuffer, 0, writeBuffer.capacity())
                         .set(jsonPayload, UTF_8)
                         .build();
-                final OctetsFW challengeData = octetsRW.set(data.buffer(), 0, data.limit()).build();
 
                 final SseEventFW sseEvent = sseEventRW.wrap(writeBuffer, DataFW.FIELD_OFFSET_PAYLOAD, writeBuffer.capacity())
                         .type(challengeType.value())
-                        .data(challengeData)
+                        .data(data)
                         .build();
+
+                final DataFW frame = dataRW.wrap(writeBuffer, 0, writeBuffer.capacity())
+                        .routeId(networkRouteId)
+                        .streamId(networkReplyId)
+                        .trace(signal.trace())
+                        .authorization(signal.authorization())
+//                        .flags(flags)
+                        .groupId(0)
+                        .padding(networkReplyPadding)
+                        .payload(sseEvent.buffer(), sseEvent.offset(), sseEvent.sizeof())
+                        .build();
+
+                applicationReplyThrottle.accept(frame.typeId(), frame.buffer(), frame.offset(), frame.sizeof());
             }
         }
     }
