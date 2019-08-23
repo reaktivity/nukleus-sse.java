@@ -52,6 +52,24 @@ public class HandshakeIT
     public final TestRule chain = outerRule(reaktor).around(k3po).around(timeout);
 
     @Test
+    @Specification({
+        "${route}/server/controller",
+        "${client}/cors.preflight/request" })
+    public void shouldHandshakeWithCorsPreflight() throws Exception
+    {
+        k3po.finish();
+    }
+
+    @Test
+    @Specification({
+        "${route}/server/controller",
+        "${client}/request.method.unsupported/request" })
+    public void shouldFailHandshakeWhenRequestMethodUnsupported() throws Exception
+    {
+        k3po.finish();
+    }
+
+    @Test
     @Configure(name = SSE_INITIAL_COMMENT_ENABLED_NAME, value = "true")
     @Specification({
             "${route}/server/controller",
