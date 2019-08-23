@@ -39,6 +39,7 @@ import com.google.gson.JsonObject;
 import org.agrona.DirectBuffer;
 import org.agrona.MutableDirectBuffer;
 import org.agrona.collections.Long2ObjectHashMap;
+import org.agrona.concurrent.UnsafeBuffer;
 import org.reaktivity.nukleus.buffer.BufferPool;
 import org.reaktivity.nukleus.function.MessageConsumer;
 import org.reaktivity.nukleus.function.MessageFunction;
@@ -50,6 +51,8 @@ import org.reaktivity.nukleus.sse.internal.types.Flyweight;
 import org.reaktivity.nukleus.sse.internal.types.HttpHeaderFW;
 import org.reaktivity.nukleus.sse.internal.types.ListFW;
 import org.reaktivity.nukleus.sse.internal.types.OctetsFW;
+import org.reaktivity.nukleus.sse.internal.types.StringFW;
+import org.reaktivity.nukleus.sse.internal.types.String16FW;
 import org.reaktivity.nukleus.sse.internal.types.StringFW;
 import org.reaktivity.nukleus.sse.internal.types.codec.SseEventFW;
 import org.reaktivity.nukleus.sse.internal.types.control.RouteFW;
@@ -72,6 +75,20 @@ public final class ServerStreamFactory implements StreamFactory
 {
     private static final String HTTP_TYPE_NAME = "http";
     private static final String CHALLENGE_TYPE_NAME = "challenge";
+
+    private static final StringFW HEADER_NAME_METHOD = initStringFW(":method");
+    private static final StringFW HEADER_NAME_STATUS = initStringFW(":status");
+    private static final StringFW HEADER_NAME_ACCESS_CONTROL_ALLOW_METHODS = initStringFW("access-control-allow-methods");
+    private static final StringFW HEADER_NAME_ACCESS_CONTROL_REQUEST_METHOD = initStringFW("access-control-request-method");
+    private static final StringFW HEADER_NAME_ACCESS_CONTROL_REQUEST_HEADERS = initStringFW("access-control-request-headers");
+
+    private static final String16FW HEADER_VALUE_STATUS_204 = initString16FW("204");
+    private static final String16FW HEADER_VALUE_STATUS_405 = initString16FW("405");
+    private static final String16FW HEADER_VALUE_METHOD_GET = initString16FW("GET");
+    private static final String16FW HEADER_VALUE_METHOD_OPTIONS = initString16FW("OPTIONS");
+
+    private static final String16FW CORS_PREFLIGHT_METHOD = HEADER_VALUE_METHOD_OPTIONS;
+    private static final String16FW CORS_ALLOWED_METHODS = HEADER_VALUE_METHOD_GET;
 
     private static final Pattern QUERY_PARAMS_PATTERN = Pattern.compile("(?<path>[^?]*)(?<query>[\\?].*)");
     private static final Pattern LAST_EVENT_ID_PATTERN = Pattern.compile("(\\?|&)lastEventId=(?<lastEventId>[^&]*)(&|$)");
@@ -178,41 +195,164 @@ public final class ServerStreamFactory implements StreamFactory
 
         if ((streamId & 0x0000_0000_0000_0001L) != 0L)
         {
-            newStream = newAcceptStream(begin, throttle);
+            newStream = newInitialStream(begin, throttle);
         }
         else
         {
-            newStream = newConnectReplyStream(begin, throttle);
+            newStream = newReplyStream(begin, throttle);
         }
 
         return newStream;
     }
 
-    private MessageConsumer newAcceptStream(
+    private MessageConsumer newInitialStream(
         final BeginFW begin,
         final MessageConsumer acceptReply)
     {
-        final long acceptRouteId = begin.routeId();
-
-        final MessagePredicate filter = (t, b, o, l) -> true;
-        final RouteFW route = router.resolve(acceptRouteId, begin.authorization(), filter, this::wrapRoute);
+        final OctetsFW extension = begin.extension();
+        final HttpBeginExFW httpBeginEx = extension.get(httpBeginExRO::tryWrap);
 
         MessageConsumer newStream = null;
 
-        if (route != null)
+        if (isCorsPreflightRequest(httpBeginEx))
         {
+            final long acceptRouteId = begin.routeId();
             final long acceptInitialId = begin.streamId();
+            final long acceptReplyId = supplyReplyId.applyAsLong(acceptInitialId);
+            final long newTraceId = supplyTraceId.getAsLong();
 
-            newStream = new ServerAcceptStream(
-                    acceptReply,
-                    acceptRouteId,
-                    acceptInitialId)::handleStream;
+            doHttpBegin(acceptReply, acceptRouteId, acceptReplyId, newTraceId, 0L,
+                    ServerStreamFactory::setCorsPreflightResponse);
+            doHttpEnd(acceptReply, acceptRouteId, acceptReplyId, newTraceId, 0L);
+
+            newStream = (t, b, i, l) -> {};
+        }
+        else if (!isSseRequestMethod(httpBeginEx))
+        {
+            final long acceptRouteId = begin.routeId();
+            final long acceptInitialId = begin.streamId();
+            final long acceptReplyId = supplyReplyId.applyAsLong(acceptInitialId);
+            final long newTraceId = supplyTraceId.getAsLong();
+
+            doHttpBegin(acceptReply, acceptRouteId, acceptReplyId, newTraceId, 0L,
+                    hs -> hs.item(h -> h.name(HEADER_NAME_STATUS).value(HEADER_VALUE_STATUS_405)));
+            doHttpEnd(acceptReply, acceptRouteId, acceptReplyId, newTraceId, 0L);
+
+            newStream = (t, b, i, l) -> {};
+        }
+        else
+        {
+            newStream = newInitialSseStream(begin, acceptReply, httpBeginEx);
         }
 
         return newStream;
     }
 
-    private MessageConsumer newConnectReplyStream(
+    public MessageConsumer newInitialSseStream(
+        final BeginFW begin,
+        final MessageConsumer acceptReply,
+        final HttpBeginExFW httpBeginEx)
+    {
+        final long acceptRouteId = begin.routeId();
+        final long acceptInitialId = begin.streamId();
+        final long traceId = begin.trace();
+        final long authorization = begin.authorization();
+
+        // TODO: need lightweight approach (start)
+        final Map<String, String> headers = new LinkedHashMap<>();
+        httpBeginEx.headers().forEach(header ->
+        {
+            final String name = header.name().asString();
+            final String value = header.value().asString();
+            headers.merge(name, value, (v1, v2) -> String.format("%s, %s", v1, v2));
+        });
+
+        String pathInfo = headers.get(":path"); // TODO: ":pathinfo" ?
+        String lastEventId = headers.get("last-event-id");
+
+        // extract lastEventId query parameter from pathInfo
+        // use query parameter value as default for missing Last-Event-ID header
+        if (pathInfo != null)
+        {
+            Matcher matcher = QUERY_PARAMS_PATTERN.matcher(pathInfo);
+            if (matcher.matches())
+            {
+                String path = matcher.group("path");
+                String query = matcher.group("query");
+
+                matcher = LAST_EVENT_ID_PATTERN.matcher(query);
+                StringBuffer builder = new StringBuffer(path);
+                while (matcher.find())
+                {
+                    if (lastEventId == null)
+                    {
+                        lastEventId = decodeLastEventId(matcher.group("lastEventId"));
+                    }
+
+                    String replacement = matcher.group(3).isEmpty() ? "$3" : "$1";
+                    matcher.appendReplacement(builder, replacement);
+                }
+                matcher.appendTail(builder);
+                pathInfo = builder.toString();
+            }
+        }
+
+        // TODO: need lightweight approach (end)
+
+        final MessagePredicate filter = (t, b, o, l) ->
+        {
+            final RouteFW route = routeRO.wrap(b, o, o + l);
+            final SseRouteExFW routeEx = route.extension().get(sseRouteExRO::tryWrap);
+            final String routePathInfo = routeEx != null ? routeEx.pathInfo().asString() : null;
+
+            // TODO: process pathInfo matching
+            //       && pathInfo.startsWith(routePathInfo);
+            return true;
+        };
+
+        MessageConsumer newStream = null;
+
+        final RouteFW route = router.resolve(acceptRouteId, authorization, filter, wrapRoute);
+        if (route != null)
+        {
+            final SseRouteExFW sseRouteEx = route.extension().get(sseRouteExRO::tryWrap);
+
+            final long connectRouteId = route.correlationId();
+            final long connectInitialId = supplyInitialId.applyAsLong(connectRouteId);
+            final long connectReplyId = supplyReplyId.applyAsLong(connectInitialId);
+            final MessageConsumer connectInitial = router.supplyReceiver(connectInitialId);
+
+            final boolean timestampRequested = httpBeginEx.headers().anyMatch(header ->
+                "accept".equals(header.name().asString()) && header.value().asString().contains("ext=timestamp"));
+
+            final ServerAcceptStream server = new ServerAcceptStream(
+                    acceptReply,
+                    acceptRouteId,
+                    acceptInitialId,
+                    connectInitial,
+                    connectRouteId,
+                    connectInitialId);
+
+            final ServerHandshake handshake = new ServerHandshake(
+                acceptReply,
+                acceptRouteId,
+                acceptInitialId,
+                connectRouteId,
+                timestampRequested);
+
+            correlations.put(connectReplyId, handshake);
+
+            router.setThrottle(connectInitialId, server::handleThrottle);
+            doSseBegin(connectInitial, connectRouteId, connectInitialId, traceId, authorization,
+                    pathInfo, lastEventId);
+
+            newStream = server::handleStream;
+        }
+
+        return newStream;
+    }
+
+    private MessageConsumer newReplyStream(
         final BeginFW begin,
         final MessageConsumer applicationReplyThrottle)
     {
@@ -235,24 +375,25 @@ public final class ServerStreamFactory implements StreamFactory
     {
         private final MessageConsumer acceptReply;
         private final long acceptRouteId;
-        private final long acceptId;
-
-        private MessageConsumer connectInitial;
-        private long connectRouteId;
-        private long connectInitialId;
-
-        private MessageConsumer streamState;
+        private final long acceptInitialId;
+        private final MessageConsumer connectInitial;
+        private final long connectRouteId;
+        private final long connectInitialId;
 
         private ServerAcceptStream(
             MessageConsumer acceptReply,
             long acceptRouteId,
-            long acceptId)
+            long acceptInitialId,
+            MessageConsumer connectInitial,
+            long connectRouteId,
+            long connectInitialId)
         {
             this.acceptReply = acceptReply;
             this.acceptRouteId = acceptRouteId;
-            this.acceptId = acceptId;
-
-            this.streamState = this::beforeBegin;
+            this.acceptInitialId = acceptInitialId;
+            this.connectInitial = connectInitial;
+            this.connectRouteId = connectRouteId;
+            this.connectInitialId = connectInitialId;
         }
 
         private void handleStream(
@@ -261,34 +402,12 @@ public final class ServerStreamFactory implements StreamFactory
             int index,
             int length)
         {
-            streamState.accept(msgTypeId, buffer, index, length);
-        }
-
-        private void beforeBegin(
-            int msgTypeId,
-            DirectBuffer buffer,
-            int index,
-            int length)
-        {
-            if (msgTypeId == BeginFW.TYPE_ID)
-            {
-                final BeginFW begin = beginRO.wrap(buffer, index, index + length);
-                handleBegin(begin);
-            }
-            else
-            {
-                doReset(acceptReply, acceptRouteId, acceptId);
-            }
-        }
-
-        private void afterBegin(
-            int msgTypeId,
-            DirectBuffer buffer,
-            int index,
-            int length)
-        {
             switch (msgTypeId)
             {
+            case BeginFW.TYPE_ID:
+                final BeginFW begin = beginRO.wrap(buffer, index, index + length);
+                handleBegin(begin);
+                break;
             case EndFW.TYPE_ID:
                 final EndFW end = endRO.wrap(buffer, index, index + length);
                 handleEnd(end);
@@ -298,7 +417,7 @@ public final class ServerStreamFactory implements StreamFactory
                 handleAbort(abort);
                 break;
             default:
-                doReset(acceptReply, acceptRouteId, acceptId);
+                doReset(acceptReply, acceptRouteId, acceptInitialId);
                 break;
             }
         }
@@ -306,101 +425,6 @@ public final class ServerStreamFactory implements StreamFactory
         private void handleBegin(
             BeginFW begin)
         {
-            final long acceptRouteId = begin.routeId();
-            final OctetsFW extension = begin.extension();
-            final long traceId = begin.trace();
-            final long authorization = begin.authorization();
-
-            // TODO: need lightweight approach (start)
-            final HttpBeginExFW httpBeginEx = extension.get(httpBeginExRO::wrap);
-            final Map<String, String> headers = new LinkedHashMap<>();
-            httpBeginEx.headers().forEach(header ->
-            {
-                final String name = header.name().asString();
-                final String value = header.value().asString();
-                headers.merge(name, value, (v1, v2) -> String.format("%s, %s", v1, v2));
-            });
-
-            String pathInfo = headers.get(":path"); // TODO: ":pathinfo" ?
-            String lastEventId = headers.get("last-event-id");
-
-            // extract lastEventId query parameter from pathInfo
-            // use query parameter value as default for missing Last-Event-ID header
-            if (pathInfo != null)
-            {
-                Matcher matcher = QUERY_PARAMS_PATTERN.matcher(pathInfo);
-                if (matcher.matches())
-                {
-                    String path = matcher.group("path");
-                    String query = matcher.group("query");
-
-                    matcher = LAST_EVENT_ID_PATTERN.matcher(query);
-                    StringBuffer builder = new StringBuffer(path);
-                    while (matcher.find())
-                    {
-                        if (lastEventId == null)
-                        {
-                            lastEventId = decodeLastEventId(matcher.group("lastEventId"));
-                        }
-
-                        String replacement = matcher.group(3).isEmpty() ? "$3" : "$1";
-                        matcher.appendReplacement(builder, replacement);
-                    }
-                    matcher.appendTail(builder);
-                    pathInfo = builder.toString();
-                }
-            }
-
-            // TODO: need lightweight approach (end)
-
-            final MessagePredicate filter = (t, b, o, l) ->
-            {
-                final RouteFW route = routeRO.wrap(b, o, o + l);
-                final SseRouteExFW routeEx = route.extension().get(sseRouteExRO::wrap);
-                final String routePathInfo = routeEx.pathInfo().asString();
-
-                // TODO: process pathInfo matching
-                //       && acceptPathInfo.startsWith(pathInfo);
-                return true;
-            };
-
-            final RouteFW route = router.resolve(acceptRouteId, authorization, filter, wrapRoute);
-
-            if (route != null)
-            {
-                final SseRouteExFW sseRouteEx = route.extension().get(sseRouteExRO::wrap);
-
-                final long connectRouteId = route.correlationId();
-                final long connectInitialId = supplyInitialId.applyAsLong(connectRouteId);
-                final long connectReplyId = supplyReplyId.applyAsLong(connectInitialId);
-                final MessageConsumer connectInitial = router.supplyReceiver(connectInitialId);
-
-                final boolean timestampRequested = httpBeginEx.headers().anyMatch(header ->
-                    "accept".equals(header.name().asString()) && header.value().asString().contains("ext=timestamp"));
-
-                ServerHandshake handshake = new ServerHandshake(
-                    acceptReply,
-                    acceptRouteId,
-                    acceptId,
-                    connectRouteId,
-                    timestampRequested);
-
-                correlations.put(connectReplyId, handshake);
-
-                router.setThrottle(connectInitialId, this::handleThrottle);
-                doSseBegin(connectInitial, connectRouteId, connectInitialId, traceId, authorization,
-                        pathInfo, lastEventId);
-
-                this.connectRouteId = connectRouteId;
-                this.connectInitialId = connectInitialId;
-                this.connectInitial = connectInitial;
-            }
-            else
-            {
-                doReset(acceptReply, acceptRouteId, acceptId); // 4xx
-            }
-
-            this.streamState = this::afterBegin;
         }
 
         private void handleEnd(
@@ -443,7 +467,7 @@ public final class ServerStreamFactory implements StreamFactory
             ResetFW reset)
         {
             final long traceId = reset.trace();
-            doReset(acceptReply, acceptRouteId, acceptId, traceId);
+            doReset(acceptReply, acceptRouteId, acceptInitialId, traceId);
         }
     }
 
@@ -1092,5 +1116,46 @@ public final class ServerStreamFactory implements StreamFactory
         }
 
         return lastEventId;
+    }
+
+    private static boolean isCorsPreflightRequest(
+        HttpBeginExFW httpBeginEx)
+    {
+        return httpBeginEx != null &&
+               httpBeginEx.headers().anyMatch(h -> HEADER_NAME_METHOD.equals(h.name()) &&
+                                                   CORS_PREFLIGHT_METHOD.equals(h.value())) &&
+               httpBeginEx.headers().anyMatch(h -> HEADER_NAME_ACCESS_CONTROL_REQUEST_METHOD.equals(h.name()) ||
+                                                   HEADER_NAME_ACCESS_CONTROL_REQUEST_HEADERS.equals(h.name()));
+    }
+
+    private static void setCorsPreflightResponse(
+        ListFW.Builder<HttpHeaderFW.Builder, HttpHeaderFW> headers)
+    {
+        headers.item(h -> h.name(HEADER_NAME_STATUS).value(HEADER_VALUE_STATUS_204))
+               .item(h -> h.name(HEADER_NAME_ACCESS_CONTROL_ALLOW_METHODS).value(CORS_ALLOWED_METHODS));
+    }
+
+    private static boolean isSseRequestMethod(
+        HttpBeginExFW httpBeginEx)
+    {
+        return httpBeginEx != null &&
+               httpBeginEx.headers().anyMatch(h -> HEADER_NAME_METHOD.equals(h.name()) &&
+                                                   HEADER_VALUE_METHOD_GET.equals(h.value()));
+    }
+
+    private static StringFW initStringFW(
+        String value)
+    {
+        return new StringFW.Builder().wrap(new UnsafeBuffer(new byte[256]), 0, 256)
+                .set(value, UTF_8)
+                .build();
+    }
+
+    private static String16FW initString16FW(
+        String value)
+    {
+        return new String16FW.Builder().wrap(new UnsafeBuffer(new byte[256]), 0, 256)
+                .set(value, UTF_8)
+                .build();
     }
 }
