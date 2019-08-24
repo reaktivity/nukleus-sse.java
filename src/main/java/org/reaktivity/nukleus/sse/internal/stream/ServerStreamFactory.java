@@ -24,7 +24,6 @@ import static org.reaktivity.nukleus.sse.internal.util.Flags.INIT;
 
 import java.io.UnsupportedEncodingException;
 import java.net.URLDecoder;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.function.Consumer;
@@ -53,7 +52,6 @@ import org.reaktivity.nukleus.sse.internal.types.ListFW;
 import org.reaktivity.nukleus.sse.internal.types.OctetsFW;
 import org.reaktivity.nukleus.sse.internal.types.StringFW;
 import org.reaktivity.nukleus.sse.internal.types.String16FW;
-import org.reaktivity.nukleus.sse.internal.types.StringFW;
 import org.reaktivity.nukleus.sse.internal.types.codec.SseEventFW;
 import org.reaktivity.nukleus.sse.internal.types.control.RouteFW;
 import org.reaktivity.nukleus.sse.internal.types.control.SseRouteExFW;
@@ -75,7 +73,7 @@ public final class ServerStreamFactory implements StreamFactory
 {
     private static final String HTTP_TYPE_NAME = "http";
 
-    private static final UnsafeBuffer CHALLENGE_TYPE = new UnsafeBuffer("challenge".getBytes(UTF_8));
+    private static final StringFW EVENT_TYPE_CHALLENGE = initStringFW("challenge");
 
     private static final StringFW HEADER_NAME_METHOD = initStringFW(":method");
     private static final StringFW HEADER_NAME_STATUS = initStringFW(":status");
@@ -131,7 +129,6 @@ public final class ServerStreamFactory implements StreamFactory
     private final HttpBeginExFW.Builder httpBeginExRW = new HttpBeginExFW.Builder();
 
     private final HttpSignalExFW httpSignalExRO = new HttpSignalExFW();
-    private final HttpSignalExFW.Builder httpSignalExRW = new HttpSignalExFW.Builder();
 
     private final SseDataExFW sseDataExRO = new SseDataExFW();
     private final SseEndExFW sseEndExRO = new SseEndExFW();
@@ -825,41 +822,45 @@ public final class ServerStreamFactory implements StreamFactory
             final HttpSignalExFW httpSignalEx = signal.extension().get(httpSignalExRO::tryWrap);
             if (httpSignalEx != null)
             {
-                final ListFW<HttpHeaderFW> httpHeaders = httpSignalEx.headers();
-                final Map<String, String> challengeHeaders = new HashMap<>();
-                httpHeaders.forEach(header -> challengeHeaders.put(header.name().asString(), header.value().asString()));
-
                 final JsonObject jsonHeaders = new JsonObject();
                 final JsonObject challenge = new JsonObject();
-                challengeHeaders.forEach((k, v) -> {
-                    if (!k.startsWith(":"))
+                final ListFW<HttpHeaderFW> httpHeaders = httpSignalEx.headers();
+
+                httpHeaders.forEach(header ->
+                {
+                    final String name = header.name().asString();
+                    final String value = header.value().asString();
+                    if (name != null)
                     {
-                        jsonHeaders.addProperty(k, v);
-                    }
-                    else if (k.equals(":method"))
-                    {
-                        challenge.addProperty("method", v);
+                        if (name.startsWith(":"))
+                        {
+                            jsonHeaders.addProperty(name, value);
+                        }
+                        else if (name.equals(":method"))
+                        {
+                            challenge.addProperty("method", value);
+                        }
                     }
                 });
+
                 challenge.addProperty("headers", gson.toJson(jsonHeaders));
 
                 final SseEventFW sseEvent = sseEventRW.wrap(writeBuffer, DataFW.FIELD_OFFSET_PAYLOAD, writeBuffer.capacity())
-                        .type(CHALLENGE_TYPE)
+                        .type(EVENT_TYPE_CHALLENGE.value())
                         .data(initStringFW(gson.toJson(challenge)))
                         .build();
 
-                final DataFW frame = dataRW.wrap(writeBuffer, 0, writeBuffer.capacity())
+                final DataFW data = dataRW.wrap(writeBuffer, 0, writeBuffer.capacity())
                         .routeId(networkRouteId)
                         .streamId(networkReplyId)
                         .trace(signal.trace())
                         .authorization(signal.authorization())
-//                        .flags(flags)
                         .groupId(0)
                         .padding(networkReplyPadding)
                         .payload(sseEvent.buffer(), sseEvent.offset(), sseEvent.sizeof())
                         .build();
 
-                applicationReplyThrottle.accept(frame.typeId(), frame.buffer(), frame.offset(), frame.sizeof());
+                applicationReplyThrottle.accept(data.typeId(), data.buffer(), data.offset(), data.sizeof());
             }
         }
     }

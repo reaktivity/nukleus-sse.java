@@ -21,7 +21,6 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 import org.agrona.DirectBuffer;
 import org.agrona.MutableDirectBuffer;
 import org.reaktivity.nukleus.sse.internal.types.Flyweight;
-import org.reaktivity.nukleus.sse.internal.types.OctetsFW;
 
 public final class SseEventFW extends Flyweight
 {
