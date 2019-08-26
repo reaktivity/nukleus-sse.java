@@ -50,8 +50,8 @@ import org.reaktivity.nukleus.sse.internal.types.Flyweight;
 import org.reaktivity.nukleus.sse.internal.types.HttpHeaderFW;
 import org.reaktivity.nukleus.sse.internal.types.ListFW;
 import org.reaktivity.nukleus.sse.internal.types.OctetsFW;
-import org.reaktivity.nukleus.sse.internal.types.StringFW;
 import org.reaktivity.nukleus.sse.internal.types.String16FW;
+import org.reaktivity.nukleus.sse.internal.types.StringFW;
 import org.reaktivity.nukleus.sse.internal.types.codec.SseEventFW;
 import org.reaktivity.nukleus.sse.internal.types.control.RouteFW;
 import org.reaktivity.nukleus.sse.internal.types.control.SseRouteExFW;
@@ -75,16 +75,16 @@ public final class ServerStreamFactory implements StreamFactory
 
     private static final StringFW EVENT_TYPE_CHALLENGE = initStringFW("challenge");
 
-    private static final StringFW HEADER_NAME_METHOD = initStringFW(":method");
-    private static final StringFW HEADER_NAME_STATUS = initStringFW(":status");
-    private static final StringFW HEADER_NAME_ACCESS_CONTROL_ALLOW_METHODS = initStringFW("access-control-allow-methods");
-    private static final StringFW HEADER_NAME_ACCESS_CONTROL_REQUEST_METHOD = initStringFW("access-control-request-method");
-    private static final StringFW HEADER_NAME_ACCESS_CONTROL_REQUEST_HEADERS = initStringFW("access-control-request-headers");
+    private static final StringFW HEADER_NAME_METHOD = new StringFW(":method");
+    private static final StringFW HEADER_NAME_STATUS = new StringFW(":status");
+    private static final StringFW HEADER_NAME_ACCESS_CONTROL_ALLOW_METHODS = new StringFW("access-control-allow-methods");
+    private static final StringFW HEADER_NAME_ACCESS_CONTROL_REQUEST_METHOD = new StringFW("access-control-request-method");
+    private static final StringFW HEADER_NAME_ACCESS_CONTROL_REQUEST_HEADERS = new StringFW("access-control-request-headers");
 
-    private static final String16FW HEADER_VALUE_STATUS_204 = initString16FW("204");
-    private static final String16FW HEADER_VALUE_STATUS_405 = initString16FW("405");
-    private static final String16FW HEADER_VALUE_METHOD_GET = initString16FW("GET");
-    private static final String16FW HEADER_VALUE_METHOD_OPTIONS = initString16FW("OPTIONS");
+    private static final String16FW HEADER_VALUE_STATUS_204 = new String16FW("204");
+    private static final String16FW HEADER_VALUE_STATUS_405 = new String16FW("405");
+    private static final String16FW HEADER_VALUE_METHOD_GET = new String16FW("GET");
+    private static final String16FW HEADER_VALUE_METHOD_OPTIONS = new String16FW("OPTIONS");
 
     private static final String16FW CORS_PREFLIGHT_METHOD = HEADER_VALUE_METHOD_OPTIONS;
     private static final String16FW CORS_ALLOWED_METHODS = HEADER_VALUE_METHOD_GET;
@@ -1130,21 +1130,5 @@ public final class ServerStreamFactory implements StreamFactory
         return httpBeginEx != null &&
                httpBeginEx.headers().anyMatch(h -> HEADER_NAME_METHOD.equals(h.name()) &&
                                                    HEADER_VALUE_METHOD_GET.equals(h.value()));
-    }
-
-    private static StringFW initStringFW(
-        String value)
-    {
-        return new StringFW.Builder().wrap(new UnsafeBuffer(new byte[256]), 0, 256)
-                .set(value, UTF_8)
-                .build();
-    }
-
-    private static String16FW initString16FW(
-        String value)
-    {
-        return new String16FW.Builder().wrap(new UnsafeBuffer(new byte[256]), 0, 256)
-                .set(value, UTF_8)
-                .build();
     }
 }
