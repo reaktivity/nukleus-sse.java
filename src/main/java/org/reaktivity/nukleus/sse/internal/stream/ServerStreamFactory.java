@@ -832,7 +832,7 @@ public final class ServerStreamFactory implements StreamFactory
                     final String value = header.value().asString();
                     if (name != null)
                     {
-                        if (name.startsWith(":"))
+                        if (!name.startsWith(":"))
                         {
                             jsonHeaders.addProperty(name, value);
                         }
@@ -842,7 +842,6 @@ public final class ServerStreamFactory implements StreamFactory
                         }
                     }
                 });
-
                 challenge.addProperty("headers", gson.toJson(jsonHeaders));
 
                 final SseEventFW sseEvent = sseEventRW.wrap(writeBuffer, DataFW.FIELD_OFFSET_PAYLOAD, writeBuffer.capacity())
