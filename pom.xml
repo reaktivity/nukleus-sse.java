@@ -55,7 +55,6 @@
     <nukleus.plugin.version>0.40</nukleus.plugin.version>
 
     <nukleus.sse.spec.version>0.36</nukleus.sse.spec.version>
-    <nukleus.http.spec.version>develop-SNAPSHOT</nukleus.http.spec.version>
     <reaktor.version>0.94</reaktor.version>
   </properties>
 
@@ -64,12 +63,6 @@
       <groupId>org.reaktivity</groupId>
       <artifactId>nukleus-sse.spec</artifactId>
       <version>${nukleus.sse.spec.version}</version>
-      <scope>provided</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.reaktivity</groupId>
-      <artifactId>nukleus-http.spec</artifactId>
-      <version>${nukleus.http.spec.version}</version>
       <scope>provided</scope>
     </dependency>
     <dependency>

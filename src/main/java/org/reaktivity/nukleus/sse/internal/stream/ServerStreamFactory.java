@@ -38,7 +38,6 @@ import com.google.gson.JsonObject;
 import org.agrona.DirectBuffer;
 import org.agrona.MutableDirectBuffer;
 import org.agrona.collections.Long2ObjectHashMap;
-import org.agrona.concurrent.UnsafeBuffer;
 import org.reaktivity.nukleus.buffer.BufferPool;
 import org.reaktivity.nukleus.function.MessageConsumer;
 import org.reaktivity.nukleus.function.MessageFunction;
@@ -73,7 +72,7 @@ public final class ServerStreamFactory implements StreamFactory
 {
     private static final String HTTP_TYPE_NAME = "http";
 
-    private static final StringFW EVENT_TYPE_CHALLENGE = initStringFW("challenge");
+    private static final StringFW EVENT_TYPE_CHALLENGE = new StringFW("challenge");
 
     private static final StringFW HEADER_NAME_METHOD = new StringFW(":method");
     private static final StringFW HEADER_NAME_STATUS = new StringFW(":status");
@@ -100,8 +99,8 @@ public final class ServerStreamFactory implements StreamFactory
             16 +        // event string
             3;          // \n for data:, id:, event
 
+    private final StringFW stringRO = new StringFW();
     private final StringFW.Builder stringRW = new StringFW.Builder();
-    private final OctetsFW.Builder octetsRW = new OctetsFW.Builder();
 
     private final RouteFW routeRO = new RouteFW();
     private final SseRouteExFW sseRouteExRO = new SseRouteExFW();
@@ -843,10 +842,12 @@ public final class ServerStreamFactory implements StreamFactory
                     }
                 });
                 challenge.addProperty("headers", gson.toJson(jsonHeaders));
+                writeBuffer.putStringUtf8(0, gson.toJson(challenge));
+                stringRO.wrap(writeBuffer, 0, writeBuffer.capacity());
 
                 final SseEventFW sseEvent = sseEventRW.wrap(writeBuffer, DataFW.FIELD_OFFSET_PAYLOAD, writeBuffer.capacity())
                         .type(EVENT_TYPE_CHALLENGE.value())
-                        .data(initStringFW(gson.toJson(challenge)))
+                        .data(stringRO)
                         .build();
 
                 final DataFW data = dataRW.wrap(writeBuffer, 0, writeBuffer.capacity())
