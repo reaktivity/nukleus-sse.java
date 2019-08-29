@@ -843,11 +843,11 @@ public final class ServerStreamFactory implements StreamFactory
                 });
                 challenge.addProperty("headers", gson.toJson(jsonHeaders));
                 writeBuffer.putStringUtf8(0, gson.toJson(challenge));
-                stringRO.wrap(writeBuffer, 0, writeBuffer.capacity());
+                final StringFW challengeData = stringRO.wrap(writeBuffer, 0, writeBuffer.capacity());
 
                 final SseEventFW sseEvent = sseEventRW.wrap(writeBuffer, DataFW.FIELD_OFFSET_PAYLOAD, writeBuffer.capacity())
                         .type(EVENT_TYPE_CHALLENGE.value())
-                        .data(stringRO)
+                        .data(challengeData)
                         .build();
 
                 final DataFW data = dataRW.wrap(writeBuffer, 0, writeBuffer.capacity())
