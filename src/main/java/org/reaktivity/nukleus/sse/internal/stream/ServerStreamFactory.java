@@ -218,6 +218,7 @@ public final class ServerStreamFactory implements StreamFactory
             final long acceptReplyId = supplyReplyId.applyAsLong(acceptInitialId);
             final long newTraceId = supplyTraceId.getAsLong();
 
+            doWindow(acceptReply, acceptRouteId, acceptInitialId, newTraceId, 0L, 0, 0, 0);
             doHttpBegin(acceptReply, acceptRouteId, acceptReplyId, newTraceId, 0L,
                     ServerStreamFactory::setCorsPreflightResponse);
             doHttpEnd(acceptReply, acceptRouteId, acceptReplyId, newTraceId, 0L);
@@ -231,6 +232,7 @@ public final class ServerStreamFactory implements StreamFactory
             final long acceptReplyId = supplyReplyId.applyAsLong(acceptInitialId);
             final long newTraceId = supplyTraceId.getAsLong();
 
+            doWindow(acceptReply, acceptRouteId, acceptInitialId, newTraceId, 0L, 0, 0, 0);
             doHttpBegin(acceptReply, acceptRouteId, acceptReplyId, newTraceId, 0L,
                     hs -> hs.item(h -> h.name(HEADER_NAME_STATUS).value(HEADER_VALUE_STATUS_405)));
             doHttpEnd(acceptReply, acceptRouteId, acceptReplyId, newTraceId, 0L);
@@ -422,6 +424,11 @@ public final class ServerStreamFactory implements StreamFactory
         private void handleBegin(
             BeginFW begin)
         {
+            final long routeId = begin.routeId();
+            final long streamId = begin.streamId();
+            final long traceId = supplyTraceId.getAsLong();
+
+            doWindow(acceptReply, routeId, streamId, traceId, 0L, 0, 0, 0L);
         }
 
         private void handleEnd(
