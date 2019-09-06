@@ -59,9 +59,9 @@ import org.reaktivity.nukleus.sse.internal.types.stream.BeginFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.DataFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.EndFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.HttpBeginExFW;
-import org.reaktivity.nukleus.sse.internal.types.stream.HttpSignalExFW;
+import org.reaktivity.nukleus.sse.internal.types.stream.HttpChallengeExFW;
+import org.reaktivity.nukleus.sse.internal.types.stream.ChallengeFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.ResetFW;
-import org.reaktivity.nukleus.sse.internal.types.stream.SignalFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.SseBeginExFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.SseDataExFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.SseEndExFW;
@@ -115,9 +115,9 @@ public final class ServerStreamFactory implements StreamFactory
     private final EndFW.Builder endRW = new EndFW.Builder();
     private final AbortFW.Builder abortRW = new AbortFW.Builder();
 
+    private final ChallengeFW challengeRO = new ChallengeFW();
     private final WindowFW windowRO = new WindowFW();
     private final ResetFW resetRO = new ResetFW();
-    private final SignalFW signalRO = new SignalFW();
 
     private final SseBeginExFW.Builder sseBeginExRW = new SseBeginExFW.Builder();
 
@@ -127,7 +127,7 @@ public final class ServerStreamFactory implements StreamFactory
     private final HttpBeginExFW httpBeginExRO = new HttpBeginExFW();
     private final HttpBeginExFW.Builder httpBeginExRW = new HttpBeginExFW.Builder();
 
-    private final HttpSignalExFW httpSignalExRO = new HttpSignalExFW();
+    private final HttpChallengeExFW httpChallengeExRO = new HttpChallengeExFW();
 
     private final SseDataExFW sseDataExRO = new SseDataExFW();
     private final SseEndExFW sseEndExRO = new SseEndExFW();
@@ -750,9 +750,9 @@ public final class ServerStreamFactory implements StreamFactory
                 final ResetFW reset = resetRO.wrap(buffer, index, index + length);
                 handleReset(reset);
                 break;
-            case SignalFW.TYPE_ID:
-                final SignalFW signal = signalRO.wrap(buffer, index, index + length);
-                handleSignal(signal);
+            case ChallengeFW.TYPE_ID:
+                final ChallengeFW challenge = challengeRO.wrap(buffer, index, index + length);
+                handleChallenge(challenge);
                 break;
             default:
                 // ignore
@@ -833,15 +833,15 @@ public final class ServerStreamFactory implements StreamFactory
             doReset(applicationReplyThrottle, applicationRouteId, applicationReplyId, traceId);
         }
 
-        private void handleSignal(
-            SignalFW signal)
+        private void handleChallenge(
+            ChallengeFW challenge)
         {
-            final HttpSignalExFW httpSignalEx = signal.extension().get(httpSignalExRO::tryWrap);
-            if (httpSignalEx != null)
+            final HttpChallengeExFW httpChallengeEx = challenge.extension().get(httpChallengeExRO::tryWrap);
+            if (httpChallengeEx != null)
             {
                 final JsonObject jsonHeaders = new JsonObject();
-                final JsonObject challenge = new JsonObject();
-                final ListFW<HttpHeaderFW> httpHeaders = httpSignalEx.headers();
+                final JsonObject challengeJson = new JsonObject();
+                final ListFW<HttpHeaderFW> httpHeaders = httpChallengeEx.headers();
 
                 httpHeaders.forEach(header ->
                 {
@@ -855,12 +855,12 @@ public final class ServerStreamFactory implements StreamFactory
                         }
                         else if (name.equals(":method"))
                         {
-                            challenge.addProperty("method", value);
+                            challengeJson.addProperty("method", value);
                         }
                     }
                 });
-                challenge.addProperty("headers", gson.toJson(jsonHeaders));
-                writeBuffer.putStringUtf8(0, gson.toJson(challenge));
+                challengeJson.addProperty("headers", gson.toJson(jsonHeaders));
+                writeBuffer.putStringUtf8(0, gson.toJson(challengeJson));
                 final StringFW challengeData = stringRO.wrap(writeBuffer, 0, writeBuffer.capacity());
 
                 final SseEventFW sseEvent = sseEventRW.wrap(writeBuffer, DataFW.FIELD_OFFSET_PAYLOAD, writeBuffer.capacity())
@@ -871,8 +871,8 @@ public final class ServerStreamFactory implements StreamFactory
                 final DataFW data = dataRW.wrap(writeBuffer, 0, writeBuffer.capacity())
                         .routeId(networkRouteId)
                         .streamId(networkReplyId)
-                        .trace(signal.trace())
-                        .authorization(signal.authorization())
+                        .trace(challenge.trace())
+                        .authorization(challenge.authorization())
                         .groupId(0)
                         .padding(networkReplyPadding)
                         .payload(sseEvent.buffer(), sseEvent.offset(), sseEvent.sizeof())
