@@ -424,11 +424,6 @@ public final class ServerStreamFactory implements StreamFactory
         private void handleBegin(
             BeginFW begin)
         {
-            final long routeId = begin.routeId();
-            final long streamId = begin.streamId();
-            final long traceId = supplyTraceId.getAsLong();
-
-            doWindow(acceptReply, routeId, streamId, traceId, 0L, 0, 0, 0L);
         }
 
         private void handleEnd(
@@ -461,6 +456,10 @@ public final class ServerStreamFactory implements StreamFactory
                 final ResetFW reset = resetRO.wrap(buffer, index, index + length);
                 handleReset(reset);
                 break;
+            case WindowFW.TYPE_ID:
+                final WindowFW window = windowRO.wrap(buffer, index, index + length);
+                handleWindow(window);
+                break;
             default:
                 // ignore
                 break;
@@ -472,6 +471,18 @@ public final class ServerStreamFactory implements StreamFactory
         {
             final long traceId = reset.trace();
             doReset(acceptReply, acceptRouteId, acceptInitialId, traceId);
+        }
+
+        private void handleWindow(
+            WindowFW window)
+        {
+            final long authorization = window.authorization();
+            final long traceId = window.trace();
+            final int credit = window.credit();
+            final int padding = window.padding();
+            final long groupId = window.groupId();
+
+            doWindow(acceptReply, acceptRouteId, acceptInitialId, traceId, authorization, credit, padding, groupId);
         }
     }
 
