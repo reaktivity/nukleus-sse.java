@@ -51,7 +51,7 @@ public final class SseEventFW extends Flyweight
         MutableDirectBuffer buffer,
         int offset)
     {
-        int sizeOfHex = Math.max(((Long.SIZE - numberOfLeadingZeros(value) + (3)) / 4), 1);
+        int sizeOfHex = Math.max((Long.SIZE - numberOfLeadingZeros(value) + 3) / 4, 1);
         int bytePos = sizeOfHex;
         do
         {
@@ -207,7 +207,7 @@ public final class SseEventFW extends Flyweight
             {
                 assert (flags & 0x02) != 0x00; // INIT
 
-                final int timestampSize = Math.max(((Long.SIZE - numberOfLeadingZeros(timestamp) + (3)) / 4), 1);
+                final int timestampSize = Math.max((Long.SIZE - numberOfLeadingZeros(timestamp) + 3) / 4, 1);
 
                 checkLimit(limit() +
                         TIMESTAMP_FIELD_HEADER.length +
