@@ -234,7 +234,7 @@ public final class ServerStreamFactory implements StreamFactory
 
             doWindow(acceptReply, acceptRouteId, acceptInitialId, newTraceId, 0L, 0, 0, 0);
             doHttpBegin(acceptReply, acceptRouteId, acceptReplyId, newTraceId, 0L,
-                    hs -> hs.item(h -> h.name(HEADER_NAME_STATUS).value(HEADER_VALUE_STATUS_405)));
+                hs -> hs.item(h -> h.name(HEADER_NAME_STATUS).value(HEADER_VALUE_STATUS_405)));
             doHttpEnd(acceptReply, acceptRouteId, acceptReplyId, newTraceId, 0L);
 
             newStream = (t, b, i, l) -> {};
