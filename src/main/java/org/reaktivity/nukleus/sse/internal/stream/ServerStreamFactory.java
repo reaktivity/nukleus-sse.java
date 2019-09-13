@@ -15,29 +15,12 @@
  */
 package org.reaktivity.nukleus.sse.internal.stream;
 
-import static java.nio.charset.StandardCharsets.UTF_8;
-import static java.util.Objects.requireNonNull;
-import static org.agrona.LangUtil.rethrowUnchecked;
-import static org.reaktivity.nukleus.buffer.BufferPool.NO_SLOT;
-import static org.reaktivity.nukleus.sse.internal.util.Flags.FIN;
-import static org.reaktivity.nukleus.sse.internal.util.Flags.INIT;
-
-import java.io.UnsupportedEncodingException;
-import java.net.URLDecoder;
-import java.util.LinkedHashMap;
-import java.util.Map;
-import java.util.function.Consumer;
-import java.util.function.LongSupplier;
-import java.util.function.LongUnaryOperator;
-import java.util.function.ToIntFunction;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
-
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import org.agrona.DirectBuffer;
 import org.agrona.MutableDirectBuffer;
 import org.agrona.collections.Long2ObjectHashMap;
+import org.agrona.concurrent.UnsafeBuffer;
 import org.reaktivity.nukleus.buffer.BufferPool;
 import org.reaktivity.nukleus.function.MessageConsumer;
 import org.reaktivity.nukleus.function.MessageFunction;
@@ -56,11 +39,11 @@ import org.reaktivity.nukleus.sse.internal.types.control.RouteFW;
 import org.reaktivity.nukleus.sse.internal.types.control.SseRouteExFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.AbortFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.BeginFW;
+import org.reaktivity.nukleus.sse.internal.types.stream.ChallengeFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.DataFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.EndFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.HttpBeginExFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.HttpChallengeExFW;
-import org.reaktivity.nukleus.sse.internal.types.stream.ChallengeFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.ResetFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.SseBeginExFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.SseDataExFW;
@@ -68,11 +51,27 @@ import org.reaktivity.nukleus.sse.internal.types.stream.SseEndExFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.WindowFW;
 import org.reaktivity.nukleus.stream.StreamFactory;
 
+import java.io.UnsupportedEncodingException;
+import java.net.URLDecoder;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.function.Consumer;
+import java.util.function.LongSupplier;
+import java.util.function.LongUnaryOperator;
+import java.util.function.ToIntFunction;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import static java.nio.charset.StandardCharsets.UTF_8;
+import static java.util.Objects.requireNonNull;
+import static org.agrona.LangUtil.rethrowUnchecked;
+import static org.reaktivity.nukleus.buffer.BufferPool.NO_SLOT;
+import static org.reaktivity.nukleus.sse.internal.util.Flags.FIN;
+import static org.reaktivity.nukleus.sse.internal.util.Flags.INIT;
+
 public final class ServerStreamFactory implements StreamFactory
 {
     private static final String HTTP_TYPE_NAME = "http";
-
-    private static final StringFW EVENT_TYPE_CHALLENGE = new StringFW("challenge");
 
     private static final StringFW HEADER_NAME_METHOD = new StringFW(":method");
     private static final StringFW HEADER_NAME_STATUS = new StringFW(":status");
@@ -134,8 +133,11 @@ public final class ServerStreamFactory implements StreamFactory
 
     private final SseEventFW.Builder sseEventRW = new SseEventFW.Builder();
 
+    private final StringFW challengeEventType;
+
     private final RouteManager router;
     private final MutableDirectBuffer writeBuffer;
+    private final MutableDirectBuffer challengeBuffer;
     private final BufferPool bufferPool;
     private final LongUnaryOperator supplyInitialId;
     private final LongUnaryOperator supplyReplyId;
@@ -164,6 +166,7 @@ public final class ServerStreamFactory implements StreamFactory
     {
         this.router = requireNonNull(router);
         this.writeBuffer = requireNonNull(writeBuffer);
+        this.challengeBuffer = new UnsafeBuffer(new byte[writeBuffer.capacity()]);
         this.bufferPool = requireNonNull(bufferPool);
         this.supplyInitialId = requireNonNull(supplyInitialId);
         this.supplyReplyId = requireNonNull(supplyReplyId);
@@ -175,6 +178,7 @@ public final class ServerStreamFactory implements StreamFactory
         this.sseTypeId = supplyTypeId.applyAsInt(SseNukleus.NAME);
         this.setHttpResponseHeaders = this::setHttpResponseHeaders;
         this.setHttpResponseHeadersWithTimestampExt = this::setHttpResponseHeadersWithTimestampExt;
+        this.challengeEventType = config.getEventType();
     }
 
     @Override
@@ -859,26 +863,44 @@ public final class ServerStreamFactory implements StreamFactory
                         }
                     }
                 });
-                challengeJson.addProperty("headers", gson.toJson(jsonHeaders));
-                writeBuffer.putStringUtf8(0, gson.toJson(challengeJson));
-                final StringFW challengeData = stringRO.wrap(writeBuffer, 0, writeBuffer.capacity());
+                challengeJson.add("headers", jsonHeaders);
+                challengeBuffer.putStringUtf8(0, gson.toJson(challengeJson));
+                final StringFW challengeData = stringRO.wrap(challengeBuffer, 0, challengeBuffer.capacity());
 
-                final SseEventFW sseEvent = sseEventRW.wrap(writeBuffer, DataFW.FIELD_OFFSET_PAYLOAD, writeBuffer.capacity())
-                        .type(EVENT_TYPE_CHALLENGE.value())
+                final SseEventFW sseEvent = sseEventRW.wrap(challengeBuffer, DataFW.FIELD_OFFSET_PAYLOAD, challengeBuffer.capacity())
+                        .type(challengeEventType.value())
                         .data(challengeData)
                         .build();
 
-                final DataFW data = dataRW.wrap(writeBuffer, 0, writeBuffer.capacity())
-                        .routeId(networkRouteId)
-                        .streamId(networkReplyId)
-                        .trace(challenge.trace())
-                        .authorization(challenge.authorization())
-                        .groupId(0)
-                        .padding(networkReplyPadding)
-                        .payload(sseEvent.buffer(), sseEvent.offset(), sseEvent.sizeof())
-                        .build();
+                int applicationReplyPadding = networkReplyPadding + MAXIMUM_HEADER_SIZE;
+                final int applicationReplyCredit = networkReplyBudget - applicationReplyBudget;
+                if (applicationReplyCredit > 0)
+                {
+//                    final long traceId = window.trace();
+//                    final long authorization = window.authorization();
+//                    doWindow(applicationReplyThrottle, applicationRouteId, applicationReplyId, traceId, authorization,
+//                            applicationReplyCredit, applicationReplyPadding, window.groupId());
 
-                applicationReplyThrottle.accept(data.typeId(), data.buffer(), data.offset(), data.sizeof());
+                    applicationReplyBudget += applicationReplyCredit;
+                }
+
+                if(bufferPool.acquiredSlots() < bufferPool.slotCapacity()) {
+                    final int acquiredSlot = bufferPool.acquire(applicationReplyId);
+
+                    final DataFW data = dataRW.wrap(challengeBuffer, 0, challengeBuffer.capacity())
+                            .routeId(networkRouteId)
+                            .streamId(networkReplyId)
+                            .trace(challenge.trace())
+                            .authorization(challenge.authorization())
+                            .groupId(0)
+                            .padding(networkReplyPadding)
+                            .payload(sseEvent.buffer(), sseEvent.offset(), sseEvent.sizeof())
+                            .build();
+                    bufferPool.buffer(acquiredSlot);
+                    bufferPool.release(acquiredSlot);
+
+                    applicationReplyThrottle.accept(data.typeId(), data.buffer(), data.offset(), data.sizeof());
+                }
             }
         }
     }
