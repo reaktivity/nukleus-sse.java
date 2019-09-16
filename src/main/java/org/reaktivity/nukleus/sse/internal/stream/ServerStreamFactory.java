@@ -15,8 +15,24 @@
  */
 package org.reaktivity.nukleus.sse.internal.stream;
 
-import com.google.gson.Gson;
-import com.google.gson.JsonObject;
+import static java.nio.charset.StandardCharsets.UTF_8;
+import static java.util.Objects.requireNonNull;
+import static org.agrona.LangUtil.rethrowUnchecked;
+import static org.reaktivity.nukleus.buffer.BufferPool.NO_SLOT;
+import static org.reaktivity.nukleus.sse.internal.util.Flags.FIN;
+import static org.reaktivity.nukleus.sse.internal.util.Flags.INIT;
+
+import java.io.UnsupportedEncodingException;
+import java.net.URLDecoder;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.function.Consumer;
+import java.util.function.LongSupplier;
+import java.util.function.LongUnaryOperator;
+import java.util.function.ToIntFunction;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
 import org.agrona.DirectBuffer;
 import org.agrona.MutableDirectBuffer;
 import org.agrona.collections.Long2ObjectHashMap;
@@ -51,23 +67,8 @@ import org.reaktivity.nukleus.sse.internal.types.stream.SseEndExFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.WindowFW;
 import org.reaktivity.nukleus.stream.StreamFactory;
 
-import java.io.UnsupportedEncodingException;
-import java.net.URLDecoder;
-import java.util.LinkedHashMap;
-import java.util.Map;
-import java.util.function.Consumer;
-import java.util.function.LongSupplier;
-import java.util.function.LongUnaryOperator;
-import java.util.function.ToIntFunction;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
-
-import static java.nio.charset.StandardCharsets.UTF_8;
-import static java.util.Objects.requireNonNull;
-import static org.agrona.LangUtil.rethrowUnchecked;
-import static org.reaktivity.nukleus.buffer.BufferPool.NO_SLOT;
-import static org.reaktivity.nukleus.sse.internal.util.Flags.FIN;
-import static org.reaktivity.nukleus.sse.internal.util.Flags.INIT;
+import com.google.gson.Gson;
+import com.google.gson.JsonObject;
 
 public final class ServerStreamFactory implements StreamFactory
 {
@@ -847,6 +848,7 @@ public final class ServerStreamFactory implements StreamFactory
             final HttpChallengeExFW httpChallengeEx = challenge.extension().get(httpChallengeExRO::tryWrap);
             if (httpChallengeEx != null)
             {
+                System.out.printf("httpChallengeEx: %s", httpChallengeEx.toString());
                 final JsonObject jsonHeaders = new JsonObject();
                 final JsonObject challengeJson = new JsonObject();
                 final ListFW<HttpHeaderFW> httpHeaders = httpChallengeEx.headers();
@@ -877,7 +879,8 @@ public final class ServerStreamFactory implements StreamFactory
                         .build();
 
                 final int networkReplyDebit = sseEvent.sizeof() + networkReplyPadding;
-                if(networkReplyBudget > networkReplyDebit) {
+                if (networkReplyBudget > networkReplyDebit)
+                {
                     networkReplyBudget -= networkReplyDebit;
 
                     final DataFW data = dataRW.wrap(writeBuffer, 0, writeBuffer.capacity())

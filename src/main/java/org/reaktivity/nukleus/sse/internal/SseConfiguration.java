@@ -18,7 +18,6 @@ package org.reaktivity.nukleus.sse.internal;
 import org.agrona.DirectBuffer;
 import org.agrona.concurrent.UnsafeBuffer;
 import org.reaktivity.nukleus.Configuration;
-import org.reaktivity.nukleus.sse.internal.types.StringFW;
 
 public class SseConfiguration extends Configuration
 {
@@ -51,7 +50,8 @@ public class SseConfiguration extends Configuration
         return SSE_INITIAL_COMMENT_ENABLED.getAsBoolean(this) ? INITIAL_COMMENT_DEFAULT : null;
     }
 
-    public String getChallengeEventType() {
+    public String getChallengeEventType()
+    {
         return CHALLENGE_EVENT_TYPE.get(this);
     }
 
