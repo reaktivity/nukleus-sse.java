@@ -90,6 +90,10 @@ public final class ServerStreamFactory implements StreamFactory
     private static final Pattern QUERY_PARAMS_PATTERN = Pattern.compile("(?<path>[^?]*)(?<query>[\\?].*)");
     private static final Pattern LAST_EVENT_ID_PATTERN = Pattern.compile("(\\?|&)lastEventId=(?<lastEventId>[^&]*)(&|$)");
 
+    private static final char ASCII_COLON = 0x3a;
+    private static final String METHOD_PROPERTY = "method";
+    private static final String HEADERS_PROPERTY = "headers";
+
     public static final int MAXIMUM_HEADER_SIZE =
             5 +         // data:
             3 +         // id:
@@ -849,47 +853,42 @@ public final class ServerStreamFactory implements StreamFactory
 
                 httpHeaders.forEach(header ->
                 {
-                    final String name = header.name().asString();
-                    final String value = header.value().asString();
+                    final StringFW name = header.name();
+                    final String16FW value = header.value();
                     if (name != null)
                     {
-                        if (!name.startsWith(":"))
+                        if (name.sizeof() > 0 && name.buffer().getChar(name.offset()) == ASCII_COLON)
                         {
-                            jsonHeaders.addProperty(name, value);
+                            jsonHeaders.addProperty(name.asString(), value.asString());
                         }
-                        else if (name.equals(":method"))
+                        else if (name.equals(HEADER_NAME_METHOD))
                         {
-                            challengeJson.addProperty("method", value);
+                            challengeJson.addProperty(METHOD_PROPERTY, value.asString());
                         }
                     }
                 });
-                challengeJson.add("headers", jsonHeaders);
+                challengeJson.add(HEADERS_PROPERTY, jsonHeaders);
                 challengeBuffer.putStringUtf8(0, gson.toJson(challengeJson));
                 final StringFW challengeData = stringRO.wrap(challengeBuffer, 0, challengeBuffer.capacity());
 
-                final SseEventFW sseEvent = sseEventRW.wrap(challengeBuffer, DataFW.FIELD_OFFSET_PAYLOAD, challengeBuffer.capacity())
+                final SseEventFW sseEvent = sseEventRW.wrap(writeBuffer, DataFW.FIELD_OFFSET_PAYLOAD, writeBuffer.capacity())
                         .type(challengeEventType.value())
                         .data(challengeData)
                         .build();
 
-//                bufferPool.acquiredSlots() < bufferPool.slotCapacity()
-
                 final int newTotalNetworkReplyPadding = sseEvent.sizeof() + networkReplyPadding;
                 if(networkReplyBudget > newTotalNetworkReplyPadding) {
                     networkReplyBudget -= newTotalNetworkReplyPadding;
-                    final int acquiredSlot = bufferPool.acquire(applicationReplyId);
 
-                    final DataFW data = dataRW.wrap(challengeBuffer, 0, challengeBuffer.capacity())
+                    final DataFW data = dataRW.wrap(writeBuffer, 0, writeBuffer.capacity())
                             .routeId(networkRouteId)
                             .streamId(networkReplyId)
                             .trace(challenge.trace())
-                            .authorization(challenge.authorization())
+                            .authorization(0)
                             .groupId(0)
                             .padding(networkReplyPadding)
                             .payload(sseEvent.buffer(), sseEvent.offset(), sseEvent.sizeof())
                             .build();
-//                    bufferPool.buffer(acquiredSlot);
-//                    bufferPool.release(acquiredSlot);
 
                     networkReply.accept(data.typeId(), data.buffer(), data.offset(), data.sizeof());
                 }
