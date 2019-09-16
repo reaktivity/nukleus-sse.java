@@ -876,9 +876,9 @@ public final class ServerStreamFactory implements StreamFactory
                         .data(challengeData)
                         .build();
 
-                final int newTotalNetworkReplyPadding = sseEvent.sizeof() + networkReplyPadding;
-                if(networkReplyBudget > newTotalNetworkReplyPadding) {
-                    networkReplyBudget -= newTotalNetworkReplyPadding;
+                final int networkReplyDebit = sseEvent.sizeof() + networkReplyPadding;
+                if(networkReplyBudget > networkReplyDebit) {
+                    networkReplyBudget -= networkReplyDebit;
 
                     final DataFW data = dataRW.wrap(writeBuffer, 0, writeBuffer.capacity())
                             .routeId(networkRouteId)

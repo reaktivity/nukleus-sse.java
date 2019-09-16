@@ -22,7 +22,7 @@ import org.reaktivity.nukleus.sse.internal.types.StringFW;
 
 public class SseConfiguration extends Configuration
 {
-    public static final String EVENT_TYPE_NAME = "nukleus.sse.event.type";
+    public static final String CHALLENGE_EVENT_TYPE_NAME = "nukleus.sse.event.type";
 
     public static final BooleanPropertyDef SSE_INITIAL_COMMENT_ENABLED;
 
