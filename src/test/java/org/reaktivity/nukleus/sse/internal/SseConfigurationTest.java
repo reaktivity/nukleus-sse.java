@@ -16,7 +16,7 @@
 package org.reaktivity.nukleus.sse.internal;
 
 import static org.junit.Assert.assertEquals;
-import static org.reaktivity.nukleus.sse.internal.SseConfiguration.EVENT_TYPE;
+import static org.reaktivity.nukleus.sse.internal.SseConfiguration.CHALLENGE_EVENT_TYPE;
 import static org.reaktivity.nukleus.sse.internal.SseConfiguration.EVENT_TYPE_NAME;
 import static org.reaktivity.nukleus.sse.internal.SseConfiguration.SSE_INITIAL_COMMENT_ENABLED;
 
@@ -34,8 +34,8 @@ public class SseConfigurationTest
     }
 
     @Test
-    public void shouldMatchEventTypeConfigName()
+    public void shouldMatchChallengeEventTypeConfigName()
     {
-        assertEquals(EVENT_TYPE_NAME, EVENT_TYPE.name());
+        assertEquals(EVENT_TYPE_NAME, CHALLENGE_EVENT_TYPE.name());
     }
 }

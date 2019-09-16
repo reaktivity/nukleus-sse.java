@@ -30,13 +30,13 @@ public class SseConfiguration extends Configuration
 
     private static final ConfigurationDef SSE_CONFIG;
 
-    static final PropertyDef<String> EVENT_TYPE;
+    static final PropertyDef<String> CHALLENGE_EVENT_TYPE;
 
     static
     {
         final ConfigurationDef config = new ConfigurationDef("nukleus.sse");
         SSE_INITIAL_COMMENT_ENABLED = config.property("initial.comment.enabled", false);
-        EVENT_TYPE = config.property("event.type", "challenge");
+        CHALLENGE_EVENT_TYPE = config.property("event.type", "challenge");
         SSE_CONFIG = config;
     }
 
@@ -51,8 +51,8 @@ public class SseConfiguration extends Configuration
         return SSE_INITIAL_COMMENT_ENABLED.getAsBoolean(this) ? INITIAL_COMMENT_DEFAULT : null;
     }
 
-    public StringFW getEventType() {
-        return new StringFW(EVENT_TYPE.get(this));
+    public String getChallengeEventType() {
+        return CHALLENGE_EVENT_TYPE.get(this);
     }
 
 }

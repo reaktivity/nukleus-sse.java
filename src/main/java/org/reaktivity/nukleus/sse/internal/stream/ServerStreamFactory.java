@@ -178,7 +178,7 @@ public final class ServerStreamFactory implements StreamFactory
         this.sseTypeId = supplyTypeId.applyAsInt(SseNukleus.NAME);
         this.setHttpResponseHeaders = this::setHttpResponseHeaders;
         this.setHttpResponseHeadersWithTimestampExt = this::setHttpResponseHeadersWithTimestampExt;
-        this.challengeEventType = config.getEventType();
+        this.challengeEventType = new StringFW(config.getChallengeEventType());
     }
 
     @Override
@@ -872,19 +872,11 @@ public final class ServerStreamFactory implements StreamFactory
                         .data(challengeData)
                         .build();
 
-                int applicationReplyPadding = networkReplyPadding + MAXIMUM_HEADER_SIZE;
-                final int applicationReplyCredit = networkReplyBudget - applicationReplyBudget;
-                if (applicationReplyCredit > 0)
-                {
-//                    final long traceId = window.trace();
-//                    final long authorization = window.authorization();
-//                    doWindow(applicationReplyThrottle, applicationRouteId, applicationReplyId, traceId, authorization,
-//                            applicationReplyCredit, applicationReplyPadding, window.groupId());
+//                bufferPool.acquiredSlots() < bufferPool.slotCapacity()
 
-                    applicationReplyBudget += applicationReplyCredit;
-                }
-
-                if(bufferPool.acquiredSlots() < bufferPool.slotCapacity()) {
+                final int newTotalNetworkReplyPadding = sseEvent.sizeof() + networkReplyPadding;
+                if(networkReplyBudget > newTotalNetworkReplyPadding) {
+                    networkReplyBudget -= newTotalNetworkReplyPadding;
                     final int acquiredSlot = bufferPool.acquire(applicationReplyId);
 
                     final DataFW data = dataRW.wrap(challengeBuffer, 0, challengeBuffer.capacity())
@@ -896,10 +888,10 @@ public final class ServerStreamFactory implements StreamFactory
                             .padding(networkReplyPadding)
                             .payload(sseEvent.buffer(), sseEvent.offset(), sseEvent.sizeof())
                             .build();
-                    bufferPool.buffer(acquiredSlot);
-                    bufferPool.release(acquiredSlot);
+//                    bufferPool.buffer(acquiredSlot);
+//                    bufferPool.release(acquiredSlot);
 
-                    applicationReplyThrottle.accept(data.typeId(), data.buffer(), data.offset(), data.sizeof());
+                    networkReply.accept(data.typeId(), data.buffer(), data.offset(), data.sizeof());
                 }
             }
         }
