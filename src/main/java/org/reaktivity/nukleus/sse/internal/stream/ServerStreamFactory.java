@@ -331,6 +331,8 @@ public final class ServerStreamFactory implements StreamFactory
             final long connectReplyId = supplyReplyId.applyAsLong(connectInitialId);
             final MessageConsumer connectInitial = router.supplyReceiver(connectInitialId);
 
+            final long newNetworkReplyId = supplyReplyId.applyAsLong(acceptInitialId);
+
             final boolean timestampRequested = httpBeginEx.headers().anyMatch(header ->
                 "accept".equals(header.name().asString()) && header.value().asString().contains("ext=timestamp"));
 
@@ -345,8 +347,8 @@ public final class ServerStreamFactory implements StreamFactory
             final ServerConnectReplyStream replyStream = new ServerConnectReplyStream(
                     connectInitial,
                     acceptRouteId,
-                    acceptInitialId,
-                    connectRouteId,
+                    newNetworkReplyId,
+                    connectReplyId,
                     timestampRequested);
 
             replyStream.networkReply = acceptReply;
@@ -512,7 +514,7 @@ public final class ServerStreamFactory implements StreamFactory
         private final MessageConsumer applicationReplyThrottle;
         private final long applicationRouteId;
         private final long applicationReplyId;
-        private final long connectRouteId;
+        private final long connectReplyId;
 
         private MessageConsumer networkReply;
         private long networkRouteId;
@@ -534,13 +536,13 @@ public final class ServerStreamFactory implements StreamFactory
             MessageConsumer applicationReplyThrottle,
             long acceptRouteId,
             long applicationReplyId,
-            long connectRouteId,
+            long connectReplyId,
             boolean timestampRequested)
         {
             this.applicationReplyThrottle = applicationReplyThrottle;
             this.applicationRouteId = acceptRouteId;
             this.applicationReplyId = applicationReplyId;
-            this.connectRouteId = connectRouteId;
+            this.connectReplyId = connectReplyId;
             this.timestampRequested = timestampRequested;
             this.streamState = this::beforeBegin;
         }
@@ -756,6 +758,7 @@ public final class ServerStreamFactory implements StreamFactory
             final long traceId = abort.trace();
             final long authorization = abort.authorization();
             doHttpAbort(networkReply, networkRouteId, networkReplyId, traceId, authorization);
+            cleanupCorrelationIfNecessary();
         }
 
         private void handleThrottle(
@@ -860,7 +863,6 @@ public final class ServerStreamFactory implements StreamFactory
         private void handleChallenge(
             ChallengeFW challenge)
         {
-            System.out.println("handleChallenge");
             final HttpChallengeExFW httpChallengeEx = challenge.extension().get(httpChallengeExRO::tryWrap);
             if (httpChallengeEx != null)
             {
@@ -912,6 +914,17 @@ public final class ServerStreamFactory implements StreamFactory
                     networkReply.accept(data.typeId(), data.buffer(), data.offset(), data.sizeof());
                 }
             }
+        }
+
+        private boolean cleanupCorrelationIfNecessary()
+        {
+            final ServerConnectReplyStream correlated = correlations.remove(connectReplyId);
+            if (correlated != null)
+            {
+                router.clearThrottle(applicationReplyId);
+            }
+
+            return correlated != null;
         }
     }
 
