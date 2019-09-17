@@ -120,7 +120,7 @@ public class ServerStreamBM
 //        MutableInteger traceId = new MutableInteger();
 //        MutableDirectBuffer writeBuffer = new UnsafeBuffer(new byte[1024]);
 //        Router router = new Router();
-//        StreamFactory streamFactory = new ServerStreamFactoryBuilder(config)
+//        StreamFactory streamFactory = new SseServerFactoryBuilder(config)
 //                .setAccumulatorSupplier(s -> l -> {})
 //                .setCounterSupplier(s -> () -> 0)
 //                .setBufferPoolSupplier(() -> bufferPool)

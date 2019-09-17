@@ -73,7 +73,7 @@ import org.reaktivity.nukleus.stream.StreamFactory;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 
-public final class ServerStreamFactory implements StreamFactory
+public final class SseServerFactory implements StreamFactory
 {
     private static final String HTTP_TYPE_NAME = "http";
 
@@ -155,12 +155,12 @@ public final class ServerStreamFactory implements StreamFactory
 
     private final Gson gson = new Gson();
 
-    private final Long2ObjectHashMap<ServerConnectReplyStream> correlations;
+    private final Long2ObjectHashMap<SseServerReply> correlations;
     private final MessageFunction<RouteFW> wrapRoute;
     private final Consumer<ListFW.Builder<HttpHeaderFW.Builder, HttpHeaderFW>> setHttpResponseHeaders;
     private final Consumer<ListFW.Builder<HttpHeaderFW.Builder, HttpHeaderFW>> setHttpResponseHeadersWithTimestampExt;
 
-    public ServerStreamFactory(
+    public SseServerFactory(
         SseConfiguration config,
         RouteManager router,
         MutableDirectBuffer writeBuffer,
@@ -169,7 +169,7 @@ public final class ServerStreamFactory implements StreamFactory
         LongUnaryOperator supplyReplyId,
         LongSupplier supplyTraceId,
         ToIntFunction<String> supplyTypeId,
-        Long2ObjectHashMap<ServerConnectReplyStream> correlations)
+        Long2ObjectHashMap<SseServerReply> correlations)
     {
         this.router = requireNonNull(router);
         this.writeBuffer = requireNonNull(writeBuffer);
@@ -231,7 +231,7 @@ public final class ServerStreamFactory implements StreamFactory
 
             doWindow(acceptReply, acceptRouteId, acceptInitialId, newTraceId, 0L, 0, 0, 0, 0);
             doHttpBegin(acceptReply, acceptRouteId, acceptReplyId, newTraceId, 0L,
-                    ServerStreamFactory::setCorsPreflightResponse);
+                    SseServerFactory::setCorsPreflightResponse);
             doHttpEnd(acceptReply, acceptRouteId, acceptReplyId, newTraceId, 0L);
 
             newStream = (t, b, i, l) -> {};
@@ -337,15 +337,16 @@ public final class ServerStreamFactory implements StreamFactory
             final boolean timestampRequested = httpBeginEx.headers().anyMatch(header ->
                 "accept".equals(header.name().asString()) && header.value().asString().contains("ext=timestamp"));
 
-            final ServerAcceptStream initialStream = new ServerAcceptStream(
+            final SseServerInitial initialStream = new SseServerInitial(
                     acceptReply,
                     acceptRouteId,
                     acceptInitialId,
+                    acceptReplyId,
                     connectInitial,
                     connectRouteId,
                     connectInitialId);
 
-            final ServerConnectReplyStream replyStream = new ServerConnectReplyStream(
+            final SseServerReply replyStream = new SseServerReply(
                     connectInitial,
                     connectRouteId,
                     connectReplyId,
@@ -374,7 +375,7 @@ public final class ServerStreamFactory implements StreamFactory
     {
         final long connectReplyId = begin.streamId();
 
-        final ServerConnectReplyStream replyStream = correlations.remove(connectReplyId);
+        final SseServerReply replyStream = correlations.remove(connectReplyId);
 
         MessageConsumer newStream = null;
 
@@ -395,19 +396,21 @@ public final class ServerStreamFactory implements StreamFactory
         return routeRO.wrap(buffer, index, index + length);
     }
 
-    private final class ServerAcceptStream
+    private final class SseServerInitial
     {
         private final MessageConsumer acceptReply;
         private final long acceptRouteId;
         private final long acceptInitialId;
+        private final long acceptReplyId;
         private final MessageConsumer connectInitial;
         private final long connectRouteId;
         private final long connectInitialId;
 
-        private ServerAcceptStream(
+        private SseServerInitial(
             MessageConsumer acceptReply,
             long acceptRouteId,
             long acceptInitialId,
+            long acceptReplyId,
             MessageConsumer connectInitial,
             long connectRouteId,
             long connectInitialId)
@@ -415,6 +418,7 @@ public final class ServerStreamFactory implements StreamFactory
             this.acceptReply = acceptReply;
             this.acceptRouteId = acceptRouteId;
             this.acceptInitialId = acceptInitialId;
+            this.acceptReplyId = acceptReplyId;
             this.connectInitial = connectInitial;
             this.connectRouteId = connectRouteId;
             this.connectInitialId = connectInitialId;
@@ -467,6 +471,7 @@ public final class ServerStreamFactory implements StreamFactory
 
             // TODO: SseAbortEx
             doSseAbort(connectInitial, connectRouteId, connectInitialId, traceId, authorization);
+            cleanupCorrelationIfNecessary();
         }
 
         private void handleThrottle(
@@ -510,9 +515,20 @@ public final class ServerStreamFactory implements StreamFactory
 
             doWindow(acceptReply, acceptRouteId, acceptInitialId, traceId, authorization, credit, padding, groupId, capabilities);
         }
+
+        private boolean cleanupCorrelationIfNecessary()
+        {
+            final SseServerReply correlated = correlations.remove(acceptReplyId);
+            if (correlated != null)
+            {
+                router.clearThrottle(acceptReplyId);
+            }
+
+            return correlated != null;
+        }
     }
 
-    final class ServerConnectReplyStream
+    final class SseServerReply
     {
         private final MessageConsumer applicationReplyThrottle;
         private final long applicationRouteId;
@@ -536,7 +552,7 @@ public final class ServerStreamFactory implements StreamFactory
 
         private int applicationReplyBudget;
 
-        private ServerConnectReplyStream(
+        private SseServerReply(
             MessageConsumer applicationReplyThrottle,
             long applicationRouteId,
             long applicationReplyId,
@@ -747,7 +763,6 @@ public final class ServerStreamFactory implements StreamFactory
             final long traceId = abort.trace();
             final long authorization = abort.authorization();
             doHttpAbort(networkReply, networkRouteId, networkReplyId, traceId, authorization);
-            cleanupCorrelationIfNecessary();
         }
 
         private void handleThrottle(
@@ -930,17 +945,6 @@ public final class ServerStreamFactory implements StreamFactory
                     }
                 }
             }
-        }
-
-        private boolean cleanupCorrelationIfNecessary()
-        {
-            final ServerConnectReplyStream correlated = correlations.remove(applicationReplyId);
-            if (correlated != null)
-            {
-                router.clearThrottle(applicationReplyId);
-            }
-
-            return correlated != null;
         }
     }
 

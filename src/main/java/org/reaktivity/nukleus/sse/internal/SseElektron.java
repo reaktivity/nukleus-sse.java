@@ -22,7 +22,7 @@ import java.util.Map;
 
 import org.reaktivity.nukleus.Elektron;
 import org.reaktivity.nukleus.route.RouteKind;
-import org.reaktivity.nukleus.sse.internal.stream.ServerStreamFactoryBuilder;
+import org.reaktivity.nukleus.sse.internal.stream.SseServerFactoryBuilder;
 import org.reaktivity.nukleus.stream.StreamFactoryBuilder;
 
 final class SseElektron implements Elektron
@@ -32,7 +32,7 @@ final class SseElektron implements Elektron
     SseElektron(
         SseConfiguration config)
     {
-        this.streamFactoryBuilders = singletonMap(SERVER, new ServerStreamFactoryBuilder(config));
+        this.streamFactoryBuilders = singletonMap(SERVER, new SseServerFactoryBuilder(config));
     }
 
     @Override
