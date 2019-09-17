@@ -341,6 +341,7 @@ public final class ServerStreamFactory implements StreamFactory
                     acceptReply,
                     acceptRouteId,
                     acceptInitialId,
+                    acceptReplyId,
                     connectInitial,
                     connectRouteId,
                     connectInitialId);
@@ -400,6 +401,7 @@ public final class ServerStreamFactory implements StreamFactory
         private final MessageConsumer acceptReply;
         private final long acceptRouteId;
         private final long acceptInitialId;
+        private final long acceptReplyId;
         private final MessageConsumer connectInitial;
         private final long connectRouteId;
         private final long connectInitialId;
@@ -408,6 +410,7 @@ public final class ServerStreamFactory implements StreamFactory
             MessageConsumer acceptReply,
             long acceptRouteId,
             long acceptInitialId,
+            long acceptReplyId,
             MessageConsumer connectInitial,
             long connectRouteId,
             long connectInitialId)
@@ -415,6 +418,7 @@ public final class ServerStreamFactory implements StreamFactory
             this.acceptReply = acceptReply;
             this.acceptRouteId = acceptRouteId;
             this.acceptInitialId = acceptInitialId;
+            this.acceptReplyId = acceptReplyId;
             this.connectInitial = connectInitial;
             this.connectRouteId = connectRouteId;
             this.connectInitialId = connectInitialId;
@@ -467,6 +471,7 @@ public final class ServerStreamFactory implements StreamFactory
 
             // TODO: SseAbortEx
             doSseAbort(connectInitial, connectRouteId, connectInitialId, traceId, authorization);
+            cleanupCorrelationIfNecessary();
         }
 
         private void handleThrottle(
@@ -509,6 +514,17 @@ public final class ServerStreamFactory implements StreamFactory
             final int capabilities = window.capabilities() | CHALLENGE_CAPABILITIES_MASK;
 
             doWindow(acceptReply, acceptRouteId, acceptInitialId, traceId, authorization, credit, padding, groupId, capabilities);
+        }
+
+        private boolean cleanupCorrelationIfNecessary()
+        {
+            final ServerConnectReplyStream correlated = correlations.remove(acceptReplyId);
+            if (correlated != null)
+            {
+                router.clearThrottle(acceptReplyId);
+            }
+
+            return correlated != null;
         }
     }
 
@@ -747,7 +763,6 @@ public final class ServerStreamFactory implements StreamFactory
             final long traceId = abort.trace();
             final long authorization = abort.authorization();
             doHttpAbort(networkReply, networkRouteId, networkReplyId, traceId, authorization);
-            cleanupCorrelationIfNecessary();
         }
 
         private void handleThrottle(
@@ -930,17 +945,6 @@ public final class ServerStreamFactory implements StreamFactory
                     }
                 }
             }
-        }
-
-        private boolean cleanupCorrelationIfNecessary()
-        {
-            final ServerConnectReplyStream correlated = correlations.remove(applicationReplyId);
-            if (correlated != null)
-            {
-                router.clearThrottle(applicationReplyId);
-            }
-
-            return correlated != null;
         }
     }
 
