@@ -17,10 +17,13 @@ package org.reaktivity.nukleus.sse.internal.types.codec;
 
 import static java.lang.Long.numberOfLeadingZeros;
 import static java.nio.charset.StandardCharsets.UTF_8;
+import static org.agrona.BitUtil.SIZE_OF_BYTE;
 
 import org.agrona.DirectBuffer;
 import org.agrona.MutableDirectBuffer;
 import org.reaktivity.nukleus.sse.internal.types.Flyweight;
+import org.reaktivity.nukleus.sse.internal.types.OctetsFW;
+import org.reaktivity.nukleus.sse.internal.types.StringFW;
 
 public final class SseEventFW extends Flyweight
 {
@@ -122,41 +125,61 @@ public final class SseEventFW extends Flyweight
         }
 
         public Builder data(
-            Flyweight data)
+            OctetsFW data)
         {
             if (data != null)
             {
-                final MutableDirectBuffer buffer = buffer();
+                data(data.buffer(), data.offset(), data.sizeof());
+            }
 
-                int trailerSize = 0;
-                if ((flags & 0x01) != 0x00) // FIN
-                {
-                    trailerSize = EVENT_TRAILER_LENGTH;
-                    limit(limit() - EVENT_TRAILER_LENGTH);
-                }
+            return this;
+        }
 
-                if ((flags & 0x02) != 0x00) // INIT
-                {
-                    checkLimit(limit() + trailerSize + DATA_FIELD_HEADER.length, maxLimit());
-                    buffer.putBytes(limit(), DATA_FIELD_HEADER);
-                    limit(limit() + DATA_FIELD_HEADER.length);
+        public Builder data(
+            StringFW data)
+        {
+            if (data != null && data.buffer().getByte(data.offset()) >= 0)
+            {
+                data(data.buffer(), data.offset() + SIZE_OF_BYTE, data.sizeof() - SIZE_OF_BYTE);
+            }
 
-                    flags &= ~0x02; // ~INIT
-                }
+            return this;
+        }
 
-                checkLimit(limit() + trailerSize + data.sizeof(), maxLimit());
-                buffer.putBytes(limit(), data.buffer(), data.offset(), data.sizeof());
-                limit(limit() + data.sizeof());
+        private Builder data(
+            DirectBuffer payload,
+            int offset,
+            int length)
+        {
+            final MutableDirectBuffer buffer = buffer();
 
-                if ((flags & 0x01) != 0x00) // FIN
-                {
-                    checkLimit(limit() + trailerSize + FIELD_TRAILER_LENGTH, maxLimit());
-                    buffer.putByte(limit(), FIELD_TRAILER);
-                    limit(limit() + FIELD_TRAILER_LENGTH);
+            int trailerSize = 0;
+            if ((flags & 0x01) != 0x00) // FIN
+            {
+                trailerSize = EVENT_TRAILER_LENGTH;
+                limit(limit() - EVENT_TRAILER_LENGTH);
+            }
 
-                    buffer.putByte(limit(), EVENT_TRAILER);
-                    limit(limit() + EVENT_TRAILER_LENGTH);
-                }
+            if ((flags & 0x02) != 0x00) // INIT
+            {
+                checkLimit(limit() + trailerSize + DATA_FIELD_HEADER.length, maxLimit());
+                buffer.putBytes(limit(), DATA_FIELD_HEADER);
+                limit(limit() + DATA_FIELD_HEADER.length);
+
+                flags &= ~0x02; // ~INIT
+            }
+
+            buffer.putBytes(limit(), payload, offset, length);
+            limit(limit() + length);
+
+            if ((flags & 0x01) != 0x00) // FIN
+            {
+                checkLimit(limit() + trailerSize + FIELD_TRAILER_LENGTH, maxLimit());
+                buffer.putByte(limit(), FIELD_TRAILER);
+                limit(limit() + FIELD_TRAILER_LENGTH);
+
+                buffer.putByte(limit(), EVENT_TRAILER);
+                limit(limit() + EVENT_TRAILER_LENGTH);
             }
 
             return this;

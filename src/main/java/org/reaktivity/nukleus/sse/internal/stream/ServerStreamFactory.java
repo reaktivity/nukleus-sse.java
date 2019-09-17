@@ -17,6 +17,7 @@ package org.reaktivity.nukleus.sse.internal.stream;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Objects.requireNonNull;
+import static org.agrona.BitUtil.SIZE_OF_BYTE;
 import static org.agrona.LangUtil.rethrowUnchecked;
 import static org.reaktivity.nukleus.buffer.BufferPool.NO_SLOT;
 import static org.reaktivity.nukleus.sse.internal.util.Flags.FIN;
@@ -66,6 +67,7 @@ import org.reaktivity.nukleus.sse.internal.types.stream.SseBeginExFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.SseDataExFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.SseEndExFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.WindowFW;
+import org.reaktivity.nukleus.sse.internal.util.Flags;
 import org.reaktivity.nukleus.stream.StreamFactory;
 
 import com.google.gson.Gson;
@@ -92,7 +94,7 @@ public final class ServerStreamFactory implements StreamFactory
     private static final Pattern QUERY_PARAMS_PATTERN = Pattern.compile("(?<path>[^?]*)(?<query>[\\?].*)");
     private static final Pattern LAST_EVENT_ID_PATTERN = Pattern.compile("(\\?|&)lastEventId=(?<lastEventId>[^&]*)(&|$)");
 
-    private static final char ASCII_COLON = 0x3a;
+    private static final byte ASCII_COLON = 0x3a;
     private static final String METHOD_PROPERTY = "method";
     private static final String HEADERS_PROPERTY = "headers";
 
@@ -103,6 +105,8 @@ public final class ServerStreamFactory implements StreamFactory
             6 +         // event:
             16 +        // event string
             3;          // \n for data:, id:, event
+
+    private static final int CHALLENGE_CAPABILITIES_MASK = 1 << Capability.CHALLENGE.ordinal();
 
     private final StringFW stringRO = new StringFW();
     private final StringFW.Builder stringRW = new StringFW.Builder();
@@ -242,7 +246,7 @@ public final class ServerStreamFactory implements StreamFactory
             final long acceptReplyId = supplyReplyId.applyAsLong(acceptInitialId);
             final long newTraceId = supplyTraceId.getAsLong();
 
-            doWindow(acceptReply, acceptRouteId, acceptInitialId, newTraceId, 0L, 0, 0, 0, 1 << Capability.CHALLENGE.ordinal());
+            doWindow(acceptReply, acceptRouteId, acceptInitialId, newTraceId, 0L, 0, 0, 0, 0);
             doHttpBegin(acceptReply, acceptRouteId, acceptReplyId, newTraceId, 0L,
                 hs -> hs.item(h -> h.name(HEADER_NAME_STATUS).value(HEADER_VALUE_STATUS_405)));
             doHttpEnd(acceptReply, acceptRouteId, acceptReplyId, newTraceId, 0L);
@@ -331,7 +335,7 @@ public final class ServerStreamFactory implements StreamFactory
             final long connectReplyId = supplyReplyId.applyAsLong(connectInitialId);
             final MessageConsumer connectInitial = router.supplyReceiver(connectInitialId);
 
-            final long newNetworkReplyId = supplyReplyId.applyAsLong(acceptInitialId);
+            final long acceptReplyId = supplyReplyId.applyAsLong(acceptInitialId);
 
             final boolean timestampRequested = httpBeginEx.headers().anyMatch(header ->
                 "accept".equals(header.name().asString()) && header.value().asString().contains("ext=timestamp"));
@@ -346,16 +350,17 @@ public final class ServerStreamFactory implements StreamFactory
 
             final ServerConnectReplyStream replyStream = new ServerConnectReplyStream(
                     connectInitial,
-                    acceptRouteId,
-                    newNetworkReplyId,
+                    connectRouteId,
                     connectReplyId,
+                    acceptReply,
+                    acceptRouteId,
+                    acceptReplyId,
                     timestampRequested);
 
-            replyStream.networkReply = acceptReply;
             correlations.put(connectReplyId, replyStream);
 
             router.setThrottle(connectInitialId, initialStream::handleThrottle);
-            router.setThrottle(connectReplyId, replyStream::handleThrottle);
+            router.setThrottle(acceptReplyId, replyStream::handleThrottle);
 
             doSseBegin(connectInitial, connectRouteId, connectInitialId, traceId, authorization,
                     pathInfo, lastEventId);
@@ -370,14 +375,14 @@ public final class ServerStreamFactory implements StreamFactory
         final BeginFW begin,
         final MessageConsumer applicationReplyThrottle)
     {
-//        final long applicationRouteId = begin.routeId();
         final long connectReplyId = begin.streamId();
 
         final ServerConnectReplyStream replyStream = correlations.remove(connectReplyId);
 
         MessageConsumer newStream = null;
 
-        if(replyStream != null) {
+        if (replyStream != null)
+        {
             newStream = replyStream::handleStream;
         }
 
@@ -504,8 +509,9 @@ public final class ServerStreamFactory implements StreamFactory
             final int credit = window.credit();
             final int padding = window.padding();
             final long groupId = window.groupId();
+            final int capabilities = window.capabilities() | CHALLENGE_CAPABILITIES_MASK;
 
-            doWindow(acceptReply, acceptRouteId, acceptInitialId, traceId, authorization, credit, padding, groupId, 0);
+            doWindow(acceptReply, acceptRouteId, acceptInitialId, traceId, authorization, credit, padding, groupId, capabilities);
         }
     }
 
@@ -514,11 +520,13 @@ public final class ServerStreamFactory implements StreamFactory
         private final MessageConsumer applicationReplyThrottle;
         private final long applicationRouteId;
         private final long applicationReplyId;
-        private final long connectReplyId;
 
-        private MessageConsumer networkReply;
-        private long networkRouteId;
-        private long networkReplyId;
+        private final MessageConsumer networkReply;
+        private final long networkRouteId;
+        private final long networkReplyId;
+
+        private final boolean timestampRequested;
+
         private int networkSlot = NO_SLOT;
         int networkSlotOffset;
         boolean deferredEnd;
@@ -530,19 +538,22 @@ public final class ServerStreamFactory implements StreamFactory
         private int networkReplyPadding;
 
         private int applicationReplyBudget;
-        private boolean timestampRequested;
 
         private ServerConnectReplyStream(
             MessageConsumer applicationReplyThrottle,
-            long acceptRouteId,
+            long applicationRouteId,
             long applicationReplyId,
-            long connectReplyId,
+            MessageConsumer networkReply,
+            long networkRouteId,
+            long networkReplyId,
             boolean timestampRequested)
         {
             this.applicationReplyThrottle = applicationReplyThrottle;
-            this.applicationRouteId = acceptRouteId;
+            this.applicationRouteId = applicationRouteId;
             this.applicationReplyId = applicationReplyId;
-            this.connectReplyId = connectReplyId;
+            this.networkReply = networkReply;
+            this.networkRouteId = networkRouteId;
+            this.networkReplyId = networkReplyId;
             this.timestampRequested = timestampRequested;
             this.streamState = this::beforeBegin;
         }
@@ -602,50 +613,31 @@ public final class ServerStreamFactory implements StreamFactory
         private void handleBegin(
             BeginFW begin)
         {
-            final long applicationReplyId = begin.streamId();
             final long applicationReplyTraceId = begin.trace();
             final long applicationReplyAuthorization = begin.authorization();
 
-            final ServerConnectReplyStream reply = correlations.remove(applicationReplyId);
-
-            if (reply != null)
+            if (timestampRequested)
             {
-                final long networkRouteId = reply.networkRouteId;
-
-                final MessageConsumer networkReply = reply.networkReply;
-                final long newNetworkReplyId = supplyReplyId.applyAsLong(reply.networkReplyId);
-
-                if (reply.timestampRequested)
-                {
-                    doHttpBegin(
-                        networkReply,
-                        networkRouteId,
-                        newNetworkReplyId,
-                        applicationReplyTraceId,
-                        applicationReplyAuthorization,
-                        setHttpResponseHeadersWithTimestampExt);
-                }
-                else
-                {
-                    doHttpBegin(
-                        networkReply,
-                        networkRouteId,
-                        newNetworkReplyId,
-                        applicationReplyTraceId,
-                        applicationReplyAuthorization,
-                        setHttpResponseHeaders);
-                }
-
-                this.networkReply = networkReply;
-                this.networkRouteId = networkRouteId;
-                this.networkReplyId = newNetworkReplyId;
-
-                this.streamState = this::afterBeginOrData;
+                doHttpBegin(
+                    networkReply,
+                    networkRouteId,
+                    networkReplyId,
+                    applicationReplyTraceId,
+                    applicationReplyAuthorization,
+                    setHttpResponseHeadersWithTimestampExt);
             }
             else
             {
-                doReset(applicationReplyThrottle, applicationRouteId, applicationReplyId);
+                doHttpBegin(
+                    networkReply,
+                    networkRouteId,
+                    networkReplyId,
+                    applicationReplyTraceId,
+                    applicationReplyAuthorization,
+                    setHttpResponseHeaders);
             }
+
+            this.streamState = this::afterBeginOrData;
         }
 
         private void handleData(
@@ -829,14 +821,15 @@ public final class ServerStreamFactory implements StreamFactory
             if (networkSlot != NO_SLOT && networkReplyBudget >= networkSlotOffset + networkReplyPadding)
             {
                 MutableDirectBuffer buffer = bufferPool.buffer(networkSlot);
-                DataFW frame = dataRO.wrap(buffer,  0,  networkSlotOffset);
-                networkReply.accept(frame.typeId(), frame.buffer(), frame.offset(), frame.sizeof());
-                networkReplyBudget -= frame.sizeof() + networkReplyPadding;
+                DataFW data = dataRO.wrap(buffer,  0,  networkSlotOffset);
+                networkReply.accept(data.typeId(), data.buffer(), data.offset(), data.sizeof());
+                networkReplyBudget -= data.sizeof() + data.padding();
                 bufferPool.release(networkSlot);
                 networkSlot = NO_SLOT;
+                networkSlotOffset = 0;
                 if (deferredEnd)
                 {
-                    doHttpEnd(networkReply, networkRouteId, networkReplyId, frame.trace(), frame.authorization());
+                    doHttpEnd(networkReply, networkRouteId, networkReplyId, data.trace(), data.authorization());
                     deferredEnd = false;
                 }
             }
@@ -866,7 +859,6 @@ public final class ServerStreamFactory implements StreamFactory
             final HttpChallengeExFW httpChallengeEx = challenge.extension().get(httpChallengeExRO::tryWrap);
             if (httpChallengeEx != null)
             {
-                System.out.printf("httpChallengeEx: %s\n", httpChallengeEx.toString());
                 final JsonObject jsonHeaders = new JsonObject();
                 final JsonObject challengeJson = new JsonObject();
                 final ListFW<HttpHeaderFW> httpHeaders = httpChallengeEx.headers();
@@ -877,7 +869,8 @@ public final class ServerStreamFactory implements StreamFactory
                     final String16FW value = header.value();
                     if (name != null)
                     {
-                        if (name.sizeof() > 0 && name.buffer().getChar(name.offset()) == ASCII_COLON)
+                        if (name.sizeof() > SIZE_OF_BYTE &&
+                            name.buffer().getByte(name.offset() + SIZE_OF_BYTE) != ASCII_COLON)
                         {
                             jsonHeaders.addProperty(name.asString(), value.asString());
                         }
@@ -888,12 +881,24 @@ public final class ServerStreamFactory implements StreamFactory
                     }
                 });
                 challengeJson.add(HEADERS_PROPERTY, jsonHeaders);
-                challengeBuffer.putStringUtf8(0, gson.toJson(challengeJson));
-                final StringFW challengeData = stringRO.wrap(challengeBuffer, 0, challengeBuffer.capacity());
+                final StringFW challengeData = stringRW.wrap(challengeBuffer, 0, challengeBuffer.capacity())
+                    .set(gson.toJson(challengeJson), UTF_8)
+                    .build();
 
                 final SseEventFW sseEvent = sseEventRW.wrap(writeBuffer, DataFW.FIELD_OFFSET_PAYLOAD, writeBuffer.capacity())
+                        .flags(Flags.INIT | Flags.FIN)
                         .type(challengeEventType.value())
                         .data(challengeData)
+                        .build();
+
+                final DataFW data = dataRW.wrap(writeBuffer, 0, writeBuffer.capacity())
+                        .routeId(networkRouteId)
+                        .streamId(networkReplyId)
+                        .trace(challenge.trace())
+                        .authorization(0)
+                        .groupId(0)
+                        .padding(networkReplyPadding)
+                        .payload(sseEvent.buffer(), sseEvent.offset(), sseEvent.sizeof())
                         .build();
 
                 final int networkReplyDebit = sseEvent.sizeof() + networkReplyPadding;
@@ -901,24 +906,28 @@ public final class ServerStreamFactory implements StreamFactory
                 {
                     networkReplyBudget -= networkReplyDebit;
 
-                    final DataFW data = dataRW.wrap(writeBuffer, 0, writeBuffer.capacity())
-                            .routeId(networkRouteId)
-                            .streamId(networkReplyId)
-                            .trace(challenge.trace())
-                            .authorization(0)
-                            .groupId(0)
-                            .padding(networkReplyPadding)
-                            .payload(sseEvent.buffer(), sseEvent.offset(), sseEvent.sizeof())
-                            .build();
-
                     networkReply.accept(data.typeId(), data.buffer(), data.offset(), data.sizeof());
+                }
+                else
+                {
+                    if (networkSlot == NO_SLOT)
+                    {
+                        networkSlot = bufferPool.acquire(networkReplyId);
+                    }
+
+                    if (networkSlot != NO_SLOT)
+                    {
+                        MutableDirectBuffer buffer = bufferPool.buffer(networkSlot);
+                        buffer.putBytes(networkSlotOffset, data.buffer(), data.offset(), data.sizeof());
+                        networkSlotOffset += data.sizeof();
+                    }
                 }
             }
         }
 
         private boolean cleanupCorrelationIfNecessary()
         {
-            final ServerConnectReplyStream correlated = correlations.remove(connectReplyId);
+            final ServerConnectReplyStream correlated = correlations.remove(applicationReplyId);
             if (correlated != null)
             {
                 router.clearThrottle(applicationReplyId);
