@@ -30,10 +30,10 @@ import org.reaktivity.nukleus.sse.internal.SseConfiguration;
 import org.reaktivity.nukleus.stream.StreamFactory;
 import org.reaktivity.nukleus.stream.StreamFactoryBuilder;
 
-public final class ServerStreamFactoryBuilder implements StreamFactoryBuilder
+public final class SseServerFactoryBuilder implements StreamFactoryBuilder
 {
     private final SseConfiguration config;
-    private final Long2ObjectHashMap<ServerStreamFactory.ServerConnectReplyStream> correlations;
+    private final Long2ObjectHashMap<SseServerFactory.SseServerReply> correlations;
 
     private RouteManager router;
     private MutableDirectBuffer writeBuffer;
@@ -43,7 +43,7 @@ public final class ServerStreamFactoryBuilder implements StreamFactoryBuilder
     private ToIntFunction<String> supplyTypeId;
     private Supplier<BufferPool> supplyBufferPool;
 
-    public ServerStreamFactoryBuilder(
+    public SseServerFactoryBuilder(
         SseConfiguration config)
     {
         this.config = config;
@@ -51,7 +51,7 @@ public final class ServerStreamFactoryBuilder implements StreamFactoryBuilder
     }
 
     @Override
-    public ServerStreamFactoryBuilder setRouteManager(
+    public SseServerFactoryBuilder setRouteManager(
         RouteManager router)
     {
         this.router = router;
@@ -59,7 +59,7 @@ public final class ServerStreamFactoryBuilder implements StreamFactoryBuilder
     }
 
     @Override
-    public ServerStreamFactoryBuilder setWriteBuffer(
+    public SseServerFactoryBuilder setWriteBuffer(
         MutableDirectBuffer writeBuffer)
     {
         this.writeBuffer = writeBuffer;
@@ -67,7 +67,7 @@ public final class ServerStreamFactoryBuilder implements StreamFactoryBuilder
     }
 
     @Override
-    public ServerStreamFactoryBuilder setInitialIdSupplier(
+    public SseServerFactoryBuilder setInitialIdSupplier(
         LongUnaryOperator supplyInitialId)
     {
         this.supplyInitialId = supplyInitialId;
@@ -99,14 +99,14 @@ public final class ServerStreamFactoryBuilder implements StreamFactoryBuilder
     }
 
     @Override
-    public ServerStreamFactoryBuilder setGroupBudgetClaimer(
+    public SseServerFactoryBuilder setGroupBudgetClaimer(
         LongFunction<IntUnaryOperator> groupBudgetClaimer)
     {
         return this;
     }
 
     @Override
-    public ServerStreamFactoryBuilder setGroupBudgetReleaser(
+    public SseServerFactoryBuilder setGroupBudgetReleaser(
         LongFunction<IntUnaryOperator> groupBudgetReleaser)
     {
         return this;
@@ -123,7 +123,7 @@ public final class ServerStreamFactoryBuilder implements StreamFactoryBuilder
     @Override
     public StreamFactory build()
     {
-        return new ServerStreamFactory(
+        return new SseServerFactory(
                 config,
                 router,
                 writeBuffer,
