@@ -108,7 +108,6 @@ public final class ServerStreamFactory implements StreamFactory
 
     private static final int CHALLENGE_CAPABILITIES_MASK = 1 << Capability.CHALLENGE.ordinal();
 
-    private final StringFW stringRO = new StringFW();
     private final StringFW.Builder stringRW = new StringFW.Builder();
 
     private final RouteFW routeRO = new RouteFW();
@@ -818,19 +817,26 @@ public final class ServerStreamFactory implements StreamFactory
             }
             minimumNetworkReplyBudget = 0;
 
-            if (networkSlot != NO_SLOT && networkReplyBudget >= networkSlotOffset + networkReplyPadding)
+            if (networkSlot != NO_SLOT)
             {
-                MutableDirectBuffer buffer = bufferPool.buffer(networkSlot);
-                DataFW data = dataRO.wrap(buffer,  0,  networkSlotOffset);
-                networkReply.accept(data.typeId(), data.buffer(), data.offset(), data.sizeof());
-                networkReplyBudget -= data.sizeof() + data.padding();
-                bufferPool.release(networkSlot);
-                networkSlot = NO_SLOT;
-                networkSlotOffset = 0;
-                if (deferredEnd)
+                final MutableDirectBuffer buffer = bufferPool.buffer(networkSlot);
+                final DataFW data = dataRO.wrap(buffer,  0,  networkSlotOffset);
+                final int networkReplyDebit = data.payload().sizeof() + data.padding();
+
+                if (networkReplyBudget >= networkReplyDebit)
                 {
-                    doHttpEnd(networkReply, networkRouteId, networkReplyId, data.trace(), data.authorization());
-                    deferredEnd = false;
+                    networkReply.accept(data.typeId(), data.buffer(), data.offset(), data.sizeof());
+                    networkReplyBudget -= networkReplyDebit;
+                    networkSlotOffset -= data.sizeof();
+                    assert networkSlotOffset == 0;
+                    bufferPool.release(networkSlot);
+                    networkSlot = NO_SLOT;
+
+                    if (deferredEnd)
+                    {
+                        doHttpEnd(networkReply, networkRouteId, networkReplyId, data.trace(), data.authorization());
+                        deferredEnd = false;
+                    }
                 }
             }
 
