@@ -108,8 +108,6 @@ public final class ServerStreamFactory implements StreamFactory
 
     private static final int CHALLENGE_CAPABILITIES_MASK = 1 << Capability.CHALLENGE.ordinal();
 
-    private final StringFW.Builder stringRW = new StringFW.Builder();
-
     private final RouteFW routeRO = new RouteFW();
     private final SseRouteExFW sseRouteExRO = new SseRouteExFW();
 
@@ -865,8 +863,8 @@ public final class ServerStreamFactory implements StreamFactory
             final HttpChallengeExFW httpChallengeEx = challenge.extension().get(httpChallengeExRO::tryWrap);
             if (httpChallengeEx != null)
             {
-                final JsonObject jsonHeaders = new JsonObject();
-                final JsonObject challengeJson = new JsonObject();
+                final JsonObject challengeObject = new JsonObject();
+                final JsonObject challengeHeaders = new JsonObject();
                 final ListFW<HttpHeaderFW> httpHeaders = httpChallengeEx.headers();
 
                 httpHeaders.forEach(header ->
@@ -878,23 +876,26 @@ public final class ServerStreamFactory implements StreamFactory
                         if (name.sizeof() > SIZE_OF_BYTE &&
                             name.buffer().getByte(name.offset() + SIZE_OF_BYTE) != ASCII_COLON)
                         {
-                            jsonHeaders.addProperty(name.asString(), value.asString());
+                            final String propertyName = name.asString();
+                            final String propertyValue = value.asString();
+                            challengeHeaders.addProperty(propertyName, propertyValue);
                         }
                         else if (name.equals(HEADER_NAME_METHOD))
                         {
-                            challengeJson.addProperty(METHOD_PROPERTY, value.asString());
+                            final String propertyValue = value.asString();
+                            challengeObject.addProperty(METHOD_PROPERTY, propertyValue);
                         }
                     }
                 });
-                challengeJson.add(HEADERS_PROPERTY, jsonHeaders);
-                final StringFW challengeData = stringRW.wrap(challengeBuffer, 0, challengeBuffer.capacity())
-                    .set(gson.toJson(challengeJson), UTF_8)
-                    .build();
+                challengeObject.add(HEADERS_PROPERTY, challengeHeaders);
+
+                final String challengeJson = gson.toJson(challengeObject);
+                final int challengeBytes = challengeBuffer.putStringWithoutLengthUtf8(0, challengeJson);
 
                 final SseEventFW sseEvent = sseEventRW.wrap(writeBuffer, DataFW.FIELD_OFFSET_PAYLOAD, writeBuffer.capacity())
                         .flags(Flags.INIT | Flags.FIN)
                         .type(challengeEventType.value())
-                        .data(challengeData)
+                        .data(challengeBuffer, 0, challengeBytes)
                         .build();
 
                 final DataFW data = dataRW.wrap(writeBuffer, 0, writeBuffer.capacity())

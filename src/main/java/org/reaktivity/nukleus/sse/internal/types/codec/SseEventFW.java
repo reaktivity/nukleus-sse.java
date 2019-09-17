@@ -17,13 +17,11 @@ package org.reaktivity.nukleus.sse.internal.types.codec;
 
 import static java.lang.Long.numberOfLeadingZeros;
 import static java.nio.charset.StandardCharsets.UTF_8;
-import static org.agrona.BitUtil.SIZE_OF_BYTE;
 
 import org.agrona.DirectBuffer;
 import org.agrona.MutableDirectBuffer;
 import org.reaktivity.nukleus.sse.internal.types.Flyweight;
 import org.reaktivity.nukleus.sse.internal.types.OctetsFW;
-import org.reaktivity.nukleus.sse.internal.types.StringFW;
 
 public final class SseEventFW extends Flyweight
 {
@@ -136,18 +134,7 @@ public final class SseEventFW extends Flyweight
         }
 
         public Builder data(
-            StringFW data)
-        {
-            if (data != null && data.buffer().getByte(data.offset()) >= 0)
-            {
-                data(data.buffer(), data.offset() + SIZE_OF_BYTE, data.sizeof() - SIZE_OF_BYTE);
-            }
-
-            return this;
-        }
-
-        private Builder data(
-            DirectBuffer payload,
+            DirectBuffer textAsBytes,
             int offset,
             int length)
         {
@@ -169,7 +156,7 @@ public final class SseEventFW extends Flyweight
                 flags &= ~0x02; // ~INIT
             }
 
-            buffer.putBytes(limit(), payload, offset, length);
+            buffer.putBytes(limit(), textAsBytes, offset, length);
             limit(limit() + length);
 
             if ((flags & 0x01) != 0x00) // FIN
