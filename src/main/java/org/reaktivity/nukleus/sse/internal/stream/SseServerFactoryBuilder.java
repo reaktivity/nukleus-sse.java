@@ -23,7 +23,6 @@ import java.util.function.Supplier;
 import java.util.function.ToIntFunction;
 
 import org.agrona.MutableDirectBuffer;
-import org.agrona.collections.Long2ObjectHashMap;
 import org.reaktivity.nukleus.buffer.BufferPool;
 import org.reaktivity.nukleus.route.RouteManager;
 import org.reaktivity.nukleus.sse.internal.SseConfiguration;
@@ -33,7 +32,6 @@ import org.reaktivity.nukleus.stream.StreamFactoryBuilder;
 public final class SseServerFactoryBuilder implements StreamFactoryBuilder
 {
     private final SseConfiguration config;
-    private final Long2ObjectHashMap<SseServerFactory.SseServerReply> correlations;
 
     private RouteManager router;
     private MutableDirectBuffer writeBuffer;
@@ -47,7 +45,6 @@ public final class SseServerFactoryBuilder implements StreamFactoryBuilder
         SseConfiguration config)
     {
         this.config = config;
-        this.correlations = new Long2ObjectHashMap<>();
     }
 
     @Override
@@ -131,7 +128,6 @@ public final class SseServerFactoryBuilder implements StreamFactoryBuilder
                 supplyInitialId,
                 supplyReplyId,
                 supplyTrace,
-                supplyTypeId,
-                correlations);
+                supplyTypeId);
     }
 }
