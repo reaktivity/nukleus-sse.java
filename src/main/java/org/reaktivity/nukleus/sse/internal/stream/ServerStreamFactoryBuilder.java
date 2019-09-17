@@ -33,7 +33,7 @@ import org.reaktivity.nukleus.stream.StreamFactoryBuilder;
 public final class ServerStreamFactoryBuilder implements StreamFactoryBuilder
 {
     private final SseConfiguration config;
-    private final Long2ObjectHashMap<ServerHandshake> correlations;
+    private final Long2ObjectHashMap<ServerStreamFactory.ServerConnectReplyStream> correlations;
 
     private RouteManager router;
     private MutableDirectBuffer writeBuffer;

@@ -51,6 +51,7 @@ import org.reaktivity.nukleus.sse.internal.types.OctetsFW;
 import org.reaktivity.nukleus.sse.internal.types.String16FW;
 import org.reaktivity.nukleus.sse.internal.types.StringFW;
 import org.reaktivity.nukleus.sse.internal.types.codec.SseEventFW;
+import org.reaktivity.nukleus.sse.internal.types.control.Capability;
 import org.reaktivity.nukleus.sse.internal.types.control.RouteFW;
 import org.reaktivity.nukleus.sse.internal.types.control.SseRouteExFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.AbortFW;
@@ -153,7 +154,7 @@ public final class ServerStreamFactory implements StreamFactory
 
     private final Gson gson = new Gson();
 
-    private final Long2ObjectHashMap<ServerHandshake> correlations;
+    private final Long2ObjectHashMap<ServerConnectReplyStream> correlations;
     private final MessageFunction<RouteFW> wrapRoute;
     private final Consumer<ListFW.Builder<HttpHeaderFW.Builder, HttpHeaderFW>> setHttpResponseHeaders;
     private final Consumer<ListFW.Builder<HttpHeaderFW.Builder, HttpHeaderFW>> setHttpResponseHeadersWithTimestampExt;
@@ -167,7 +168,7 @@ public final class ServerStreamFactory implements StreamFactory
         LongUnaryOperator supplyReplyId,
         LongSupplier supplyTraceId,
         ToIntFunction<String> supplyTypeId,
-        Long2ObjectHashMap<ServerHandshake> correlations)
+        Long2ObjectHashMap<ServerConnectReplyStream> correlations)
     {
         this.router = requireNonNull(router);
         this.writeBuffer = requireNonNull(writeBuffer);
@@ -227,7 +228,7 @@ public final class ServerStreamFactory implements StreamFactory
             final long acceptReplyId = supplyReplyId.applyAsLong(acceptInitialId);
             final long newTraceId = supplyTraceId.getAsLong();
 
-            doWindow(acceptReply, acceptRouteId, acceptInitialId, newTraceId, 0L, 0, 0, 0);
+            doWindow(acceptReply, acceptRouteId, acceptInitialId, newTraceId, 0L, 0, 0, 0, 0);
             doHttpBegin(acceptReply, acceptRouteId, acceptReplyId, newTraceId, 0L,
                     ServerStreamFactory::setCorsPreflightResponse);
             doHttpEnd(acceptReply, acceptRouteId, acceptReplyId, newTraceId, 0L);
@@ -241,7 +242,7 @@ public final class ServerStreamFactory implements StreamFactory
             final long acceptReplyId = supplyReplyId.applyAsLong(acceptInitialId);
             final long newTraceId = supplyTraceId.getAsLong();
 
-            doWindow(acceptReply, acceptRouteId, acceptInitialId, newTraceId, 0L, 0, 0, 0);
+            doWindow(acceptReply, acceptRouteId, acceptInitialId, newTraceId, 0L, 0, 0, 0, 1 << Capability.CHALLENGE.ordinal());
             doHttpBegin(acceptReply, acceptRouteId, acceptReplyId, newTraceId, 0L,
                 hs -> hs.item(h -> h.name(HEADER_NAME_STATUS).value(HEADER_VALUE_STATUS_405)));
             doHttpEnd(acceptReply, acceptRouteId, acceptReplyId, newTraceId, 0L);
@@ -333,7 +334,7 @@ public final class ServerStreamFactory implements StreamFactory
             final boolean timestampRequested = httpBeginEx.headers().anyMatch(header ->
                 "accept".equals(header.name().asString()) && header.value().asString().contains("ext=timestamp"));
 
-            final ServerAcceptStream server = new ServerAcceptStream(
+            final ServerAcceptStream initialStream = new ServerAcceptStream(
                     acceptReply,
                     acceptRouteId,
                     acceptInitialId,
@@ -341,20 +342,23 @@ public final class ServerStreamFactory implements StreamFactory
                     connectRouteId,
                     connectInitialId);
 
-            final ServerHandshake handshake = new ServerHandshake(
-                acceptReply,
-                acceptRouteId,
-                acceptInitialId,
-                connectRouteId,
-                timestampRequested);
+            final ServerConnectReplyStream replyStream = new ServerConnectReplyStream(
+                    connectInitial,
+                    acceptRouteId,
+                    acceptInitialId,
+                    connectRouteId,
+                    timestampRequested);
 
-            correlations.put(connectReplyId, handshake);
+            replyStream.networkReply = acceptReply;
+            correlations.put(connectReplyId, replyStream);
 
-            router.setThrottle(connectInitialId, server::handleThrottle);
+            router.setThrottle(connectInitialId, initialStream::handleThrottle);
+            router.setThrottle(connectReplyId, replyStream::handleThrottle);
+
             doSseBegin(connectInitial, connectRouteId, connectInitialId, traceId, authorization,
                     pathInfo, lastEventId);
 
-            newStream = server::handleStream;
+            newStream = initialStream::handleStream;
         }
 
         return newStream;
@@ -364,10 +368,18 @@ public final class ServerStreamFactory implements StreamFactory
         final BeginFW begin,
         final MessageConsumer applicationReplyThrottle)
     {
-        final long applicationRouteId = begin.routeId();
-        final long applicationReplyId = begin.streamId();
+//        final long applicationRouteId = begin.routeId();
+        final long connectReplyId = begin.streamId();
 
-        return new ServerConnectReplyStream(applicationReplyThrottle, applicationRouteId, applicationReplyId)::handleStream;
+        final ServerConnectReplyStream replyStream = correlations.remove(connectReplyId);
+
+        MessageConsumer newStream = null;
+
+        if(replyStream != null) {
+            newStream = replyStream::handleStream;
+        }
+
+        return newStream;
     }
 
     private RouteFW wrapRoute(
@@ -491,15 +503,16 @@ public final class ServerStreamFactory implements StreamFactory
             final int padding = window.padding();
             final long groupId = window.groupId();
 
-            doWindow(acceptReply, acceptRouteId, acceptInitialId, traceId, authorization, credit, padding, groupId);
+            doWindow(acceptReply, acceptRouteId, acceptInitialId, traceId, authorization, credit, padding, groupId, 0);
         }
     }
 
-    private final class ServerConnectReplyStream
+    final class ServerConnectReplyStream
     {
         private final MessageConsumer applicationReplyThrottle;
         private final long applicationRouteId;
         private final long applicationReplyId;
+        private final long connectRouteId;
 
         private MessageConsumer networkReply;
         private long networkRouteId;
@@ -520,11 +533,15 @@ public final class ServerStreamFactory implements StreamFactory
         private ServerConnectReplyStream(
             MessageConsumer applicationReplyThrottle,
             long acceptRouteId,
-            long applicationReplyId)
+            long applicationReplyId,
+            long connectRouteId,
+            boolean timestampRequested)
         {
             this.applicationReplyThrottle = applicationReplyThrottle;
             this.applicationRouteId = acceptRouteId;
             this.applicationReplyId = applicationReplyId;
+            this.connectRouteId = connectRouteId;
+            this.timestampRequested = timestampRequested;
             this.streamState = this::beforeBegin;
         }
 
@@ -587,18 +604,16 @@ public final class ServerStreamFactory implements StreamFactory
             final long applicationReplyTraceId = begin.trace();
             final long applicationReplyAuthorization = begin.authorization();
 
-            final ServerHandshake handshake = correlations.remove(applicationReplyId);
+            final ServerConnectReplyStream reply = correlations.remove(applicationReplyId);
 
-            if (handshake != null)
+            if (reply != null)
             {
-                final long networkRouteId = handshake.networkRouteId();
+                final long networkRouteId = reply.networkRouteId;
 
-                final MessageConsumer networkReply = handshake.networkReply();
-                final long newNetworkReplyId = supplyReplyId.applyAsLong(handshake.networkId());
-                this.timestampRequested = handshake.timestampRequested();
+                final MessageConsumer networkReply = reply.networkReply;
+                final long newNetworkReplyId = supplyReplyId.applyAsLong(reply.networkReplyId);
 
-                router.setThrottle(newNetworkReplyId, this::handleThrottle);
-                if (timestampRequested)
+                if (reply.timestampRequested)
                 {
                     doHttpBegin(
                         networkReply,
@@ -830,7 +845,7 @@ public final class ServerStreamFactory implements StreamFactory
                 final long traceId = window.trace();
                 final long authorization = window.authorization();
                 doWindow(applicationReplyThrottle, applicationRouteId, applicationReplyId, traceId, authorization,
-                         applicationReplyCredit, applicationReplyPadding, window.groupId());
+                         applicationReplyCredit, applicationReplyPadding, window.groupId(), 0);
                 applicationReplyBudget += applicationReplyCredit;
             }
         }
@@ -845,10 +860,11 @@ public final class ServerStreamFactory implements StreamFactory
         private void handleChallenge(
             ChallengeFW challenge)
         {
+            System.out.println("handleChallenge");
             final HttpChallengeExFW httpChallengeEx = challenge.extension().get(httpChallengeExRO::tryWrap);
             if (httpChallengeEx != null)
             {
-                System.out.printf("httpChallengeEx: %s", httpChallengeEx.toString());
+                System.out.printf("httpChallengeEx: %s\n", httpChallengeEx.toString());
                 final JsonObject jsonHeaders = new JsonObject();
                 final JsonObject challengeJson = new JsonObject();
                 final ListFW<HttpHeaderFW> httpHeaders = httpChallengeEx.headers();
@@ -1082,19 +1098,21 @@ public final class ServerStreamFactory implements StreamFactory
         final long routeId,
         final long streamId,
         final long traceId,
-        final long authoriation,
+        final long authorization,
         final int credit,
         final int padding,
-        final long groupId)
+        final long groupId,
+        final int capabilities)
     {
         final WindowFW window = windowRW.wrap(writeBuffer, 0, writeBuffer.capacity())
                 .routeId(routeId)
                 .streamId(streamId)
                 .trace(traceId)
-                .authorization(authoriation)
+                .authorization(authorization)
                 .credit(credit)
                 .padding(padding)
                 .groupId(groupId)
+                .capabilities(capabilities)
                 .build();
 
         sender.accept(window.typeId(), window.buffer(), window.offset(), window.sizeof());
