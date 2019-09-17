@@ -127,37 +127,46 @@ public final class SseEventFW extends Flyweight
         {
             if (data != null)
             {
-                final MutableDirectBuffer buffer = buffer();
+                data(data.buffer(), data.offset(), data.sizeof());
+            }
 
-                int trailerSize = 0;
-                if ((flags & 0x01) != 0x00) // FIN
-                {
-                    trailerSize = EVENT_TRAILER_LENGTH;
-                    limit(limit() - EVENT_TRAILER_LENGTH);
-                }
+            return this;
+        }
 
-                if ((flags & 0x02) != 0x00) // INIT
-                {
-                    checkLimit(limit() + trailerSize + DATA_FIELD_HEADER.length, maxLimit());
-                    buffer.putBytes(limit(), DATA_FIELD_HEADER);
-                    limit(limit() + DATA_FIELD_HEADER.length);
+        public Builder data(
+            DirectBuffer textAsBytes,
+            int offset,
+            int length)
+        {
+            final MutableDirectBuffer buffer = buffer();
 
-                    flags &= ~0x02; // ~INIT
-                }
+            int trailerSize = 0;
+            if ((flags & 0x01) != 0x00) // FIN
+            {
+                trailerSize = EVENT_TRAILER_LENGTH;
+                limit(limit() - EVENT_TRAILER_LENGTH);
+            }
 
-                checkLimit(limit() + trailerSize + data.sizeof(), maxLimit());
-                buffer.putBytes(limit(), data.buffer(), data.offset(), data.sizeof());
-                limit(limit() + data.sizeof());
+            if ((flags & 0x02) != 0x00) // INIT
+            {
+                checkLimit(limit() + trailerSize + DATA_FIELD_HEADER.length, maxLimit());
+                buffer.putBytes(limit(), DATA_FIELD_HEADER);
+                limit(limit() + DATA_FIELD_HEADER.length);
 
-                if ((flags & 0x01) != 0x00) // FIN
-                {
-                    checkLimit(limit() + trailerSize + FIELD_TRAILER_LENGTH, maxLimit());
-                    buffer.putByte(limit(), FIELD_TRAILER);
-                    limit(limit() + FIELD_TRAILER_LENGTH);
+                flags &= ~0x02; // ~INIT
+            }
 
-                    buffer.putByte(limit(), EVENT_TRAILER);
-                    limit(limit() + EVENT_TRAILER_LENGTH);
-                }
+            buffer.putBytes(limit(), textAsBytes, offset, length);
+            limit(limit() + length);
+
+            if ((flags & 0x01) != 0x00) // FIN
+            {
+                checkLimit(limit() + trailerSize + FIELD_TRAILER_LENGTH, maxLimit());
+                buffer.putByte(limit(), FIELD_TRAILER);
+                limit(limit() + FIELD_TRAILER_LENGTH);
+
+                buffer.putByte(limit(), EVENT_TRAILER);
+                limit(limit() + EVENT_TRAILER_LENGTH);
             }
 
             return this;

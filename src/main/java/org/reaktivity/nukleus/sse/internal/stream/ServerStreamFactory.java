@@ -17,6 +17,7 @@ package org.reaktivity.nukleus.sse.internal.stream;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Objects.requireNonNull;
+import static org.agrona.BitUtil.SIZE_OF_BYTE;
 import static org.agrona.LangUtil.rethrowUnchecked;
 import static org.reaktivity.nukleus.buffer.BufferPool.NO_SLOT;
 import static org.reaktivity.nukleus.sse.internal.util.Flags.FIN;
@@ -36,6 +37,7 @@ import java.util.regex.Pattern;
 import org.agrona.DirectBuffer;
 import org.agrona.MutableDirectBuffer;
 import org.agrona.collections.Long2ObjectHashMap;
+import org.agrona.concurrent.UnsafeBuffer;
 import org.reaktivity.nukleus.buffer.BufferPool;
 import org.reaktivity.nukleus.function.MessageConsumer;
 import org.reaktivity.nukleus.function.MessageFunction;
@@ -50,19 +52,26 @@ import org.reaktivity.nukleus.sse.internal.types.OctetsFW;
 import org.reaktivity.nukleus.sse.internal.types.String16FW;
 import org.reaktivity.nukleus.sse.internal.types.StringFW;
 import org.reaktivity.nukleus.sse.internal.types.codec.SseEventFW;
+import org.reaktivity.nukleus.sse.internal.types.control.Capability;
 import org.reaktivity.nukleus.sse.internal.types.control.RouteFW;
 import org.reaktivity.nukleus.sse.internal.types.control.SseRouteExFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.AbortFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.BeginFW;
+import org.reaktivity.nukleus.sse.internal.types.stream.ChallengeFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.DataFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.EndFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.HttpBeginExFW;
+import org.reaktivity.nukleus.sse.internal.types.stream.HttpChallengeExFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.ResetFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.SseBeginExFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.SseDataExFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.SseEndExFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.WindowFW;
+import org.reaktivity.nukleus.sse.internal.util.Flags;
 import org.reaktivity.nukleus.stream.StreamFactory;
+
+import com.google.gson.Gson;
+import com.google.gson.JsonObject;
 
 public final class ServerStreamFactory implements StreamFactory
 {
@@ -85,6 +94,10 @@ public final class ServerStreamFactory implements StreamFactory
     private static final Pattern QUERY_PARAMS_PATTERN = Pattern.compile("(?<path>[^?]*)(?<query>[\\?].*)");
     private static final Pattern LAST_EVENT_ID_PATTERN = Pattern.compile("(\\?|&)lastEventId=(?<lastEventId>[^&]*)(&|$)");
 
+    private static final byte ASCII_COLON = 0x3a;
+    private static final String METHOD_PROPERTY = "method";
+    private static final String HEADERS_PROPERTY = "headers";
+
     public static final int MAXIMUM_HEADER_SIZE =
             5 +         // data:
             3 +         // id:
@@ -92,6 +105,8 @@ public final class ServerStreamFactory implements StreamFactory
             6 +         // event:
             16 +        // event string
             3;          // \n for data:, id:, event
+
+    private static final int CHALLENGE_CAPABILITIES_MASK = 1 << Capability.CHALLENGE.ordinal();
 
     private final RouteFW routeRO = new RouteFW();
     private final SseRouteExFW sseRouteExRO = new SseRouteExFW();
@@ -106,6 +121,7 @@ public final class ServerStreamFactory implements StreamFactory
     private final EndFW.Builder endRW = new EndFW.Builder();
     private final AbortFW.Builder abortRW = new AbortFW.Builder();
 
+    private final ChallengeFW challengeRO = new ChallengeFW();
     private final WindowFW windowRO = new WindowFW();
     private final ResetFW resetRO = new ResetFW();
 
@@ -117,13 +133,18 @@ public final class ServerStreamFactory implements StreamFactory
     private final HttpBeginExFW httpBeginExRO = new HttpBeginExFW();
     private final HttpBeginExFW.Builder httpBeginExRW = new HttpBeginExFW.Builder();
 
+    private final HttpChallengeExFW httpChallengeExRO = new HttpChallengeExFW();
+
     private final SseDataExFW sseDataExRO = new SseDataExFW();
     private final SseEndExFW sseEndExRO = new SseEndExFW();
 
     private final SseEventFW.Builder sseEventRW = new SseEventFW.Builder();
 
+    private final StringFW challengeEventType;
+
     private final RouteManager router;
     private final MutableDirectBuffer writeBuffer;
+    private final MutableDirectBuffer challengeBuffer;
     private final BufferPool bufferPool;
     private final LongUnaryOperator supplyInitialId;
     private final LongUnaryOperator supplyReplyId;
@@ -132,7 +153,9 @@ public final class ServerStreamFactory implements StreamFactory
     private final int httpTypeId;
     private final int sseTypeId;
 
-    private final Long2ObjectHashMap<ServerHandshake> correlations;
+    private final Gson gson = new Gson();
+
+    private final Long2ObjectHashMap<ServerConnectReplyStream> correlations;
     private final MessageFunction<RouteFW> wrapRoute;
     private final Consumer<ListFW.Builder<HttpHeaderFW.Builder, HttpHeaderFW>> setHttpResponseHeaders;
     private final Consumer<ListFW.Builder<HttpHeaderFW.Builder, HttpHeaderFW>> setHttpResponseHeadersWithTimestampExt;
@@ -146,10 +169,11 @@ public final class ServerStreamFactory implements StreamFactory
         LongUnaryOperator supplyReplyId,
         LongSupplier supplyTraceId,
         ToIntFunction<String> supplyTypeId,
-        Long2ObjectHashMap<ServerHandshake> correlations)
+        Long2ObjectHashMap<ServerConnectReplyStream> correlations)
     {
         this.router = requireNonNull(router);
         this.writeBuffer = requireNonNull(writeBuffer);
+        this.challengeBuffer = new UnsafeBuffer(new byte[writeBuffer.capacity()]);
         this.bufferPool = requireNonNull(bufferPool);
         this.supplyInitialId = requireNonNull(supplyInitialId);
         this.supplyReplyId = requireNonNull(supplyReplyId);
@@ -161,6 +185,7 @@ public final class ServerStreamFactory implements StreamFactory
         this.sseTypeId = supplyTypeId.applyAsInt(SseNukleus.NAME);
         this.setHttpResponseHeaders = this::setHttpResponseHeaders;
         this.setHttpResponseHeadersWithTimestampExt = this::setHttpResponseHeadersWithTimestampExt;
+        this.challengeEventType = new StringFW(config.getChallengeEventType());
     }
 
     @Override
@@ -204,7 +229,7 @@ public final class ServerStreamFactory implements StreamFactory
             final long acceptReplyId = supplyReplyId.applyAsLong(acceptInitialId);
             final long newTraceId = supplyTraceId.getAsLong();
 
-            doWindow(acceptReply, acceptRouteId, acceptInitialId, newTraceId, 0L, 0, 0, 0);
+            doWindow(acceptReply, acceptRouteId, acceptInitialId, newTraceId, 0L, 0, 0, 0, 0);
             doHttpBegin(acceptReply, acceptRouteId, acceptReplyId, newTraceId, 0L,
                     ServerStreamFactory::setCorsPreflightResponse);
             doHttpEnd(acceptReply, acceptRouteId, acceptReplyId, newTraceId, 0L);
@@ -218,7 +243,7 @@ public final class ServerStreamFactory implements StreamFactory
             final long acceptReplyId = supplyReplyId.applyAsLong(acceptInitialId);
             final long newTraceId = supplyTraceId.getAsLong();
 
-            doWindow(acceptReply, acceptRouteId, acceptInitialId, newTraceId, 0L, 0, 0, 0);
+            doWindow(acceptReply, acceptRouteId, acceptInitialId, newTraceId, 0L, 0, 0, 0, 0);
             doHttpBegin(acceptReply, acceptRouteId, acceptReplyId, newTraceId, 0L,
                 hs -> hs.item(h -> h.name(HEADER_NAME_STATUS).value(HEADER_VALUE_STATUS_405)));
             doHttpEnd(acceptReply, acceptRouteId, acceptReplyId, newTraceId, 0L);
@@ -307,10 +332,12 @@ public final class ServerStreamFactory implements StreamFactory
             final long connectReplyId = supplyReplyId.applyAsLong(connectInitialId);
             final MessageConsumer connectInitial = router.supplyReceiver(connectInitialId);
 
+            final long acceptReplyId = supplyReplyId.applyAsLong(acceptInitialId);
+
             final boolean timestampRequested = httpBeginEx.headers().anyMatch(header ->
                 "accept".equals(header.name().asString()) && header.value().asString().contains("ext=timestamp"));
 
-            final ServerAcceptStream server = new ServerAcceptStream(
+            final ServerAcceptStream initialStream = new ServerAcceptStream(
                     acceptReply,
                     acceptRouteId,
                     acceptInitialId,
@@ -318,20 +345,24 @@ public final class ServerStreamFactory implements StreamFactory
                     connectRouteId,
                     connectInitialId);
 
-            final ServerHandshake handshake = new ServerHandshake(
-                acceptReply,
-                acceptRouteId,
-                acceptInitialId,
-                connectRouteId,
-                timestampRequested);
+            final ServerConnectReplyStream replyStream = new ServerConnectReplyStream(
+                    connectInitial,
+                    connectRouteId,
+                    connectReplyId,
+                    acceptReply,
+                    acceptRouteId,
+                    acceptReplyId,
+                    timestampRequested);
 
-            correlations.put(connectReplyId, handshake);
+            correlations.put(connectReplyId, replyStream);
 
-            router.setThrottle(connectInitialId, server::handleThrottle);
+            router.setThrottle(connectInitialId, initialStream::handleThrottle);
+            router.setThrottle(acceptReplyId, replyStream::handleThrottle);
+
             doSseBegin(connectInitial, connectRouteId, connectInitialId, traceId, authorization,
                     pathInfo, lastEventId);
 
-            newStream = server::handleStream;
+            newStream = initialStream::handleStream;
         }
 
         return newStream;
@@ -341,10 +372,18 @@ public final class ServerStreamFactory implements StreamFactory
         final BeginFW begin,
         final MessageConsumer applicationReplyThrottle)
     {
-        final long applicationRouteId = begin.routeId();
-        final long applicationReplyId = begin.streamId();
+        final long connectReplyId = begin.streamId();
 
-        return new ServerConnectReplyStream(applicationReplyThrottle, applicationRouteId, applicationReplyId)::handleStream;
+        final ServerConnectReplyStream replyStream = correlations.remove(connectReplyId);
+
+        MessageConsumer newStream = null;
+
+        if (replyStream != null)
+        {
+            newStream = replyStream::handleStream;
+        }
+
+        return newStream;
     }
 
     private RouteFW wrapRoute(
@@ -467,20 +506,24 @@ public final class ServerStreamFactory implements StreamFactory
             final int credit = window.credit();
             final int padding = window.padding();
             final long groupId = window.groupId();
+            final int capabilities = window.capabilities() | CHALLENGE_CAPABILITIES_MASK;
 
-            doWindow(acceptReply, acceptRouteId, acceptInitialId, traceId, authorization, credit, padding, groupId);
+            doWindow(acceptReply, acceptRouteId, acceptInitialId, traceId, authorization, credit, padding, groupId, capabilities);
         }
     }
 
-    private final class ServerConnectReplyStream
+    final class ServerConnectReplyStream
     {
         private final MessageConsumer applicationReplyThrottle;
         private final long applicationRouteId;
         private final long applicationReplyId;
 
-        private MessageConsumer networkReply;
-        private long networkRouteId;
-        private long networkReplyId;
+        private final MessageConsumer networkReply;
+        private final long networkRouteId;
+        private final long networkReplyId;
+
+        private final boolean timestampRequested;
+
         private int networkSlot = NO_SLOT;
         int networkSlotOffset;
         boolean deferredEnd;
@@ -492,16 +535,23 @@ public final class ServerStreamFactory implements StreamFactory
         private int networkReplyPadding;
 
         private int applicationReplyBudget;
-        private boolean timestampRequested;
 
         private ServerConnectReplyStream(
             MessageConsumer applicationReplyThrottle,
-            long acceptRouteId,
-            long applicationReplyId)
+            long applicationRouteId,
+            long applicationReplyId,
+            MessageConsumer networkReply,
+            long networkRouteId,
+            long networkReplyId,
+            boolean timestampRequested)
         {
             this.applicationReplyThrottle = applicationReplyThrottle;
-            this.applicationRouteId = acceptRouteId;
+            this.applicationRouteId = applicationRouteId;
             this.applicationReplyId = applicationReplyId;
+            this.networkReply = networkReply;
+            this.networkRouteId = networkRouteId;
+            this.networkReplyId = networkReplyId;
+            this.timestampRequested = timestampRequested;
             this.streamState = this::beforeBegin;
         }
 
@@ -560,52 +610,31 @@ public final class ServerStreamFactory implements StreamFactory
         private void handleBegin(
             BeginFW begin)
         {
-            final long applicationReplyId = begin.streamId();
             final long applicationReplyTraceId = begin.trace();
             final long applicationReplyAuthorization = begin.authorization();
 
-            final ServerHandshake handshake = correlations.remove(applicationReplyId);
-
-            if (handshake != null)
+            if (timestampRequested)
             {
-                final long networkRouteId = handshake.networkRouteId();
-
-                final MessageConsumer networkReply = handshake.networkReply();
-                final long newNetworkReplyId = supplyReplyId.applyAsLong(handshake.networkId());
-                this.timestampRequested = handshake.timestampRequested();
-
-                router.setThrottle(newNetworkReplyId, this::handleThrottle);
-                if (timestampRequested)
-                {
-                    doHttpBegin(
-                        networkReply,
-                        networkRouteId,
-                        newNetworkReplyId,
-                        applicationReplyTraceId,
-                        applicationReplyAuthorization,
-                        setHttpResponseHeadersWithTimestampExt);
-                }
-                else
-                {
-                    doHttpBegin(
-                        networkReply,
-                        networkRouteId,
-                        newNetworkReplyId,
-                        applicationReplyTraceId,
-                        applicationReplyAuthorization,
-                        setHttpResponseHeaders);
-                }
-
-                this.networkReply = networkReply;
-                this.networkRouteId = networkRouteId;
-                this.networkReplyId = newNetworkReplyId;
-
-                this.streamState = this::afterBeginOrData;
+                doHttpBegin(
+                    networkReply,
+                    networkRouteId,
+                    networkReplyId,
+                    applicationReplyTraceId,
+                    applicationReplyAuthorization,
+                    setHttpResponseHeadersWithTimestampExt);
             }
             else
             {
-                doReset(applicationReplyThrottle, applicationRouteId, applicationReplyId);
+                doHttpBegin(
+                    networkReply,
+                    networkRouteId,
+                    networkReplyId,
+                    applicationReplyTraceId,
+                    applicationReplyAuthorization,
+                    setHttpResponseHeaders);
             }
+
+            this.streamState = this::afterBeginOrData;
         }
 
         private void handleData(
@@ -718,6 +747,7 @@ public final class ServerStreamFactory implements StreamFactory
             final long traceId = abort.trace();
             final long authorization = abort.authorization();
             doHttpAbort(networkReply, networkRouteId, networkReplyId, traceId, authorization);
+            cleanupCorrelationIfNecessary();
         }
 
         private void handleThrottle(
@@ -735,6 +765,10 @@ public final class ServerStreamFactory implements StreamFactory
             case ResetFW.TYPE_ID:
                 final ResetFW reset = resetRO.wrap(buffer, index, index + length);
                 handleReset(reset);
+                break;
+            case ChallengeFW.TYPE_ID:
+                final ChallengeFW challenge = challengeRO.wrap(buffer, index, index + length);
+                handleChallenge(challenge);
                 break;
             default:
                 // ignore
@@ -781,18 +815,26 @@ public final class ServerStreamFactory implements StreamFactory
             }
             minimumNetworkReplyBudget = 0;
 
-            if (networkSlot != NO_SLOT && networkReplyBudget >= networkSlotOffset + networkReplyPadding)
+            if (networkSlot != NO_SLOT)
             {
-                MutableDirectBuffer buffer = bufferPool.buffer(networkSlot);
-                DataFW frame = dataRO.wrap(buffer,  0,  networkSlotOffset);
-                networkReply.accept(frame.typeId(), frame.buffer(), frame.offset(), frame.sizeof());
-                networkReplyBudget -= frame.sizeof() + networkReplyPadding;
-                bufferPool.release(networkSlot);
-                networkSlot = NO_SLOT;
-                if (deferredEnd)
+                final MutableDirectBuffer buffer = bufferPool.buffer(networkSlot);
+                final DataFW data = dataRO.wrap(buffer,  0,  networkSlotOffset);
+                final int networkReplyDebit = data.payload().sizeof() + data.padding();
+
+                if (networkReplyBudget >= networkReplyDebit)
                 {
-                    doHttpEnd(networkReply, networkRouteId, networkReplyId, frame.trace(), frame.authorization());
-                    deferredEnd = false;
+                    networkReply.accept(data.typeId(), data.buffer(), data.offset(), data.sizeof());
+                    networkReplyBudget -= networkReplyDebit;
+                    networkSlotOffset -= data.sizeof();
+                    assert networkSlotOffset == 0;
+                    bufferPool.release(networkSlot);
+                    networkSlot = NO_SLOT;
+
+                    if (deferredEnd)
+                    {
+                        doHttpEnd(networkReply, networkRouteId, networkReplyId, data.trace(), data.authorization());
+                        deferredEnd = false;
+                    }
                 }
             }
 
@@ -803,7 +845,7 @@ public final class ServerStreamFactory implements StreamFactory
                 final long traceId = window.trace();
                 final long authorization = window.authorization();
                 doWindow(applicationReplyThrottle, applicationRouteId, applicationReplyId, traceId, authorization,
-                         applicationReplyCredit, applicationReplyPadding, window.groupId());
+                         applicationReplyCredit, applicationReplyPadding, window.groupId(), 0);
                 applicationReplyBudget += applicationReplyCredit;
             }
         }
@@ -813,6 +855,92 @@ public final class ServerStreamFactory implements StreamFactory
         {
             final long traceId = reset.trace();
             doReset(applicationReplyThrottle, applicationRouteId, applicationReplyId, traceId);
+        }
+
+        private void handleChallenge(
+            ChallengeFW challenge)
+        {
+            final HttpChallengeExFW httpChallengeEx = challenge.extension().get(httpChallengeExRO::tryWrap);
+            if (httpChallengeEx != null)
+            {
+                final JsonObject challengeObject = new JsonObject();
+                final JsonObject challengeHeaders = new JsonObject();
+                final ListFW<HttpHeaderFW> httpHeaders = httpChallengeEx.headers();
+
+                httpHeaders.forEach(header ->
+                {
+                    final StringFW name = header.name();
+                    final String16FW value = header.value();
+                    if (name != null)
+                    {
+                        if (name.sizeof() > SIZE_OF_BYTE &&
+                            name.buffer().getByte(name.offset() + SIZE_OF_BYTE) != ASCII_COLON)
+                        {
+                            final String propertyName = name.asString();
+                            final String propertyValue = value.asString();
+                            challengeHeaders.addProperty(propertyName, propertyValue);
+                        }
+                        else if (name.equals(HEADER_NAME_METHOD))
+                        {
+                            final String propertyValue = value.asString();
+                            challengeObject.addProperty(METHOD_PROPERTY, propertyValue);
+                        }
+                    }
+                });
+                challengeObject.add(HEADERS_PROPERTY, challengeHeaders);
+
+                final String challengeJson = gson.toJson(challengeObject);
+                final int challengeBytes = challengeBuffer.putStringWithoutLengthUtf8(0, challengeJson);
+
+                final SseEventFW sseEvent = sseEventRW.wrap(writeBuffer, DataFW.FIELD_OFFSET_PAYLOAD, writeBuffer.capacity())
+                        .flags(Flags.INIT | Flags.FIN)
+                        .type(challengeEventType.value())
+                        .data(challengeBuffer, 0, challengeBytes)
+                        .build();
+
+                final DataFW data = dataRW.wrap(writeBuffer, 0, writeBuffer.capacity())
+                        .routeId(networkRouteId)
+                        .streamId(networkReplyId)
+                        .trace(challenge.trace())
+                        .authorization(0)
+                        .groupId(0)
+                        .padding(networkReplyPadding)
+                        .payload(sseEvent.buffer(), sseEvent.offset(), sseEvent.sizeof())
+                        .build();
+
+                final int networkReplyDebit = sseEvent.sizeof() + networkReplyPadding;
+                if (networkReplyBudget > networkReplyDebit)
+                {
+                    networkReplyBudget -= networkReplyDebit;
+
+                    networkReply.accept(data.typeId(), data.buffer(), data.offset(), data.sizeof());
+                }
+                else
+                {
+                    if (networkSlot == NO_SLOT)
+                    {
+                        networkSlot = bufferPool.acquire(networkReplyId);
+                    }
+
+                    if (networkSlot != NO_SLOT)
+                    {
+                        MutableDirectBuffer buffer = bufferPool.buffer(networkSlot);
+                        buffer.putBytes(networkSlotOffset, data.buffer(), data.offset(), data.sizeof());
+                        networkSlotOffset += data.sizeof();
+                    }
+                }
+            }
+        }
+
+        private boolean cleanupCorrelationIfNecessary()
+        {
+            final ServerConnectReplyStream correlated = correlations.remove(applicationReplyId);
+            if (correlated != null)
+            {
+                router.clearThrottle(applicationReplyId);
+            }
+
+            return correlated != null;
         }
     }
 
@@ -999,19 +1127,21 @@ public final class ServerStreamFactory implements StreamFactory
         final long routeId,
         final long streamId,
         final long traceId,
-        final long authoriation,
+        final long authorization,
         final int credit,
         final int padding,
-        final long groupId)
+        final long groupId,
+        final int capabilities)
     {
         final WindowFW window = windowRW.wrap(writeBuffer, 0, writeBuffer.capacity())
                 .routeId(routeId)
                 .streamId(streamId)
                 .trace(traceId)
-                .authorization(authoriation)
+                .authorization(authorization)
                 .credit(credit)
                 .padding(padding)
                 .groupId(groupId)
+                .capabilities(capabilities)
                 .build();
 
         sender.accept(window.typeId(), window.buffer(), window.offset(), window.sizeof());
