@@ -168,8 +168,7 @@ public final class SseServerFactory implements StreamFactory
         LongUnaryOperator supplyInitialId,
         LongUnaryOperator supplyReplyId,
         LongSupplier supplyTraceId,
-        ToIntFunction<String> supplyTypeId,
-        Long2ObjectHashMap<SseServerReply> correlations)
+        ToIntFunction<String> supplyTypeId)
     {
         this.router = requireNonNull(router);
         this.writeBuffer = requireNonNull(writeBuffer);
@@ -178,7 +177,7 @@ public final class SseServerFactory implements StreamFactory
         this.supplyInitialId = requireNonNull(supplyInitialId);
         this.supplyReplyId = requireNonNull(supplyReplyId);
         this.supplyTraceId = requireNonNull(supplyTraceId);
-        this.correlations = requireNonNull(correlations);
+        this.correlations = new Long2ObjectHashMap<>();
         this.wrapRoute = this::wrapRoute;
         this.initialComment = config.initialComment();
         this.httpTypeId = supplyTypeId.applyAsInt(HTTP_TYPE_NAME);
