@@ -828,6 +828,8 @@ public final class SseServerFactory implements StreamFactory
                     final int networkReplyInjectedPaddingDebit = Math.min(networkReplyBudget, networkReplyInjectedPadding);
                     networkReplyInjectedPadding -= networkReplyInjectedPaddingDebit;
                     networkReplyBudget -= networkReplyInjectedPaddingDebit;
+                    assert networkReplyInjectedPadding >= 0;
+                    assert networkReplyBudget >= 0;
                 }
             }
 
