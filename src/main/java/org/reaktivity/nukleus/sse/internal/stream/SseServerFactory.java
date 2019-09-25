@@ -821,12 +821,6 @@ public final class SseServerFactory implements StreamFactory
                 }
             }
 
-            if (networkReplyBudget < minimumNetworkReplyBudget)
-            {
-                // Not sending WINDOW to application side as group budget expects full initial window first time
-                // Wait until it builds up to full initial window
-                return;
-            }
             minimumNetworkReplyBudget = 0;
 
             if (networkSlot != NO_SLOT)
