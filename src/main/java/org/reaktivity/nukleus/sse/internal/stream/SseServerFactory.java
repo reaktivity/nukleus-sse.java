@@ -545,7 +545,7 @@ public final class SseServerFactory implements StreamFactory
 
         private MessageConsumer streamState;
 
-        private int minimumNetworkReplyBudget = -1;
+        private int networkReplyInjectedPadding = -1;
         private int networkReplyBudget;
         private int networkReplyPadding;
 
@@ -796,38 +796,42 @@ public final class SseServerFactory implements StreamFactory
             networkReplyBudget += window.credit();
             networkReplyPadding = window.padding();
 
-            if (minimumNetworkReplyBudget == -1)
+            if (networkReplyInjectedPadding != 0)
             {
-                minimumNetworkReplyBudget = window.credit();
-
-                if (initialComment != null)
+                if (networkReplyInjectedPadding == -1)
                 {
-                    final int bytesWritten = doHttpData(
-                            networkReply,
-                            networkRouteId,
-                            networkReplyId,
-                            supplyTraceId.getAsLong(),
-                            0L,
-                            FIN | INIT,
-                            networkReplyPadding,
-                            null,
-                            null,
-                            null,
-                            0L,
-                            initialComment);
+                    if (initialComment != null)
+                    {
+                        final int bytesWritten = doHttpData(
+                                networkReply,
+                                networkRouteId,
+                                networkReplyId,
+                                supplyTraceId.getAsLong(),
+                                0L,
+                                FIN | INIT,
+                                networkReplyPadding,
+                                null,
+                                null,
+                                null,
+                                0L,
+                                initialComment);
 
-                    networkReplyBudget -= bytesWritten + networkReplyPadding;
+                        networkReplyInjectedPadding = bytesWritten + networkReplyPadding;
+                    }
+                    else
+                    {
+                        networkReplyInjectedPadding = 0;
+                    }
+                }
+                else
+                {
+                    final int networkReplyInjectedPaddingDebit = Math.min(networkReplyBudget, networkReplyInjectedPadding);
+                    networkReplyInjectedPadding -= networkReplyInjectedPaddingDebit;
+                    networkReplyBudget -= networkReplyInjectedPaddingDebit;
+                    assert networkReplyInjectedPadding >= 0;
                     assert networkReplyBudget >= 0;
                 }
             }
-
-            if (networkReplyBudget < minimumNetworkReplyBudget)
-            {
-                // Not sending WINDOW to application side as group budget expects full initial window first time
-                // Wait until it builds up to full initial window
-                return;
-            }
-            minimumNetworkReplyBudget = 0;
 
             if (networkSlot != NO_SLOT)
             {
@@ -852,7 +856,7 @@ public final class SseServerFactory implements StreamFactory
                 }
             }
 
-            int applicationReplyPadding = networkReplyPadding + MAXIMUM_HEADER_SIZE;
+            int applicationReplyPadding = networkReplyPadding + MAXIMUM_HEADER_SIZE + networkReplyInjectedPadding;
             final int applicationReplyCredit = networkReplyBudget - applicationReplyBudget;
             if (applicationReplyCredit > 0)
             {
