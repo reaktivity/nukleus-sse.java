@@ -15,8 +15,6 @@
  */
 package org.reaktivity.nukleus.sse.internal.stream;
 
-import java.util.function.IntUnaryOperator;
-import java.util.function.LongFunction;
 import java.util.function.LongSupplier;
 import java.util.function.LongUnaryOperator;
 import java.util.function.Supplier;
@@ -92,20 +90,6 @@ public final class SseServerFactoryBuilder implements StreamFactoryBuilder
         ToIntFunction<String> supplyTypeId)
     {
         this.supplyTypeId = supplyTypeId;
-        return this;
-    }
-
-    @Override
-    public SseServerFactoryBuilder setGroupBudgetClaimer(
-        LongFunction<IntUnaryOperator> groupBudgetClaimer)
-    {
-        return this;
-    }
-
-    @Override
-    public SseServerFactoryBuilder setGroupBudgetReleaser(
-        LongFunction<IntUnaryOperator> groupBudgetReleaser)
-    {
         return this;
     }
 
