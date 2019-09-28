@@ -657,9 +657,8 @@ public final class SseServerFactory implements StreamFactory
         {
             final long traceId = data.trace();
             final long authorization = data.authorization();
-            final int dataLength = Math.max(data.length(), 0);
 
-            applicationReplyBudget -= dataLength + data.padding();
+            applicationReplyBudget -= data.reserved();
 
             if (applicationReplyBudget < 0)
             {
@@ -724,20 +723,20 @@ public final class SseServerFactory implements StreamFactory
                         .id(id)
                         .build();
 
-                final DataFW frame = dataRW.wrap(writeBuffer, 0, writeBuffer.capacity())
+                final DataFW data = dataRW.wrap(writeBuffer, 0, writeBuffer.capacity())
                     .routeId(networkRouteId)
                     .streamId(networkReplyId)
                     .trace(traceId)
                     .authorization(authorization)
                     .flags(flags)
                     .groupId(0)
-                    .padding(networkReplyPadding)
+                    .reserved(sseEvent.sizeof() + networkReplyPadding)
                     .payload(sseEvent.buffer(), sseEvent.offset(), sseEvent.sizeof())
                     .build();
 
-                if (networkReplyBudget >= frame.sizeof() + networkReplyPadding)
+                if (networkReplyBudget >= sseEvent.sizeof() + networkReplyPadding)
                 {
-                    networkReply.accept(frame.typeId(), frame.buffer(), frame.offset(), frame.sizeof());
+                    networkReply.accept(data.typeId(), data.buffer(), data.offset(), data.sizeof());
                     doHttpEnd(networkReply, networkRouteId, networkReplyId, traceId, authorization);
                 }
                 else
@@ -745,8 +744,8 @@ public final class SseServerFactory implements StreamFactory
                     // Rare condition where there is insufficient window to write id: last_event_id\n\n
                     networkSlot = bufferPool.acquire(networkReplyId);
                     MutableDirectBuffer buffer = bufferPool.buffer(networkSlot);
-                    buffer.putBytes(0, frame.buffer(), frame.offset(), frame.sizeof());
-                    networkSlotOffset = frame.sizeof();
+                    buffer.putBytes(0, data.buffer(), data.offset(), data.sizeof());
+                    networkSlotOffset = data.sizeof();
                     deferredEnd = true;
                 }
             }
@@ -837,7 +836,7 @@ public final class SseServerFactory implements StreamFactory
             {
                 final MutableDirectBuffer buffer = bufferPool.buffer(networkSlot);
                 final DataFW data = dataRO.wrap(buffer,  0,  networkSlotOffset);
-                final int networkReplyDebit = data.payload().sizeof() + data.padding();
+                final int networkReplyDebit = data.reserved();
 
                 if (networkReplyBudget >= networkReplyDebit)
                 {
@@ -922,7 +921,7 @@ public final class SseServerFactory implements StreamFactory
                         .trace(challenge.trace())
                         .authorization(0)
                         .groupId(0)
-                        .padding(networkReplyPadding)
+                        .reserved(sseEvent.sizeof() + networkReplyPadding)
                         .payload(sseEvent.buffer(), sseEvent.offset(), sseEvent.sizeof())
                         .build();
 
@@ -1025,7 +1024,7 @@ public final class SseServerFactory implements StreamFactory
                 .authorization(authorization)
                 .flags(flags)
                 .groupId(0)
-                .padding(padding)
+                .reserved(sseEvent.sizeof() + padding)
                 .payload(sseEvent.buffer(), sseEvent.offset(), sseEvent.sizeof())
                 .build();
 
