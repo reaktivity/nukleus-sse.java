@@ -35,7 +35,7 @@ public final class SseServerFactoryBuilder implements StreamFactoryBuilder
     private MutableDirectBuffer writeBuffer;
     private LongUnaryOperator supplyInitialId;
     private LongUnaryOperator supplyReplyId;
-    private LongSupplier supplyTrace;
+    private LongSupplier supplyTraceId;
     private ToIntFunction<String> supplyTypeId;
     private Supplier<BufferPool> supplyBufferPool;
 
@@ -78,10 +78,10 @@ public final class SseServerFactoryBuilder implements StreamFactoryBuilder
     }
 
     @Override
-    public StreamFactoryBuilder setTraceSupplier(
-        LongSupplier supplyTrace)
+    public StreamFactoryBuilder setTraceIdSupplier(
+        LongSupplier supplyTraceId)
     {
-        this.supplyTrace = supplyTrace;
+        this.supplyTraceId = supplyTraceId;
         return this;
     }
 
@@ -111,7 +111,7 @@ public final class SseServerFactoryBuilder implements StreamFactoryBuilder
                 supplyBufferPool.get(),
                 supplyInitialId,
                 supplyReplyId,
-                supplyTrace,
+                supplyTraceId,
                 supplyTypeId);
     }
 }
