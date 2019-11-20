@@ -15,12 +15,14 @@
  */
 package org.reaktivity.nukleus.sse.internal.stream;
 
+import java.util.function.LongFunction;
 import java.util.function.LongSupplier;
 import java.util.function.LongUnaryOperator;
 import java.util.function.Supplier;
 import java.util.function.ToIntFunction;
 
 import org.agrona.MutableDirectBuffer;
+import org.reaktivity.nukleus.budget.BudgetDebitor;
 import org.reaktivity.nukleus.buffer.BufferPool;
 import org.reaktivity.nukleus.route.RouteManager;
 import org.reaktivity.nukleus.sse.internal.SseConfiguration;
@@ -38,6 +40,7 @@ public final class SseServerFactoryBuilder implements StreamFactoryBuilder
     private LongSupplier supplyTraceId;
     private ToIntFunction<String> supplyTypeId;
     private Supplier<BufferPool> supplyBufferPool;
+    private LongFunction<BudgetDebitor> supplyDebitor;
 
     public SseServerFactoryBuilder(
         SseConfiguration config)
@@ -102,6 +105,14 @@ public final class SseServerFactoryBuilder implements StreamFactoryBuilder
     }
 
     @Override
+    public StreamFactoryBuilder setBudgetDebitorSupplier(
+        LongFunction<BudgetDebitor> supplyDebitor)
+    {
+        this.supplyDebitor = supplyDebitor;
+        return this;
+    }
+
+    @Override
     public StreamFactory build()
     {
         return new SseServerFactory(
@@ -112,6 +123,7 @@ public final class SseServerFactoryBuilder implements StreamFactoryBuilder
                 supplyInitialId,
                 supplyReplyId,
                 supplyTraceId,
-                supplyTypeId);
+                supplyTypeId,
+                supplyDebitor);
     }
 }
