@@ -19,6 +19,7 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Objects.requireNonNull;
 import static org.agrona.BitUtil.SIZE_OF_BYTE;
 import static org.agrona.LangUtil.rethrowUnchecked;
+import static org.reaktivity.nukleus.budget.BudgetDebitor.NO_DEBITOR_INDEX;
 import static org.reaktivity.nukleus.buffer.BufferPool.NO_SLOT;
 import static org.reaktivity.nukleus.sse.internal.util.Flags.FIN;
 import static org.reaktivity.nukleus.sse.internal.util.Flags.INIT;
@@ -28,6 +29,7 @@ import java.net.URLDecoder;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.function.Consumer;
+import java.util.function.LongFunction;
 import java.util.function.LongSupplier;
 import java.util.function.LongUnaryOperator;
 import java.util.function.ToIntFunction;
@@ -38,6 +40,7 @@ import org.agrona.DirectBuffer;
 import org.agrona.MutableDirectBuffer;
 import org.agrona.collections.Long2ObjectHashMap;
 import org.agrona.concurrent.UnsafeBuffer;
+import org.reaktivity.nukleus.budget.BudgetDebitor;
 import org.reaktivity.nukleus.buffer.BufferPool;
 import org.reaktivity.nukleus.function.MessageConsumer;
 import org.reaktivity.nukleus.function.MessageFunction;
@@ -60,6 +63,7 @@ import org.reaktivity.nukleus.sse.internal.types.stream.BeginFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.ChallengeFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.DataFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.EndFW;
+import org.reaktivity.nukleus.sse.internal.types.stream.FlushFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.HttpBeginExFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.HttpChallengeExFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.ResetFW;
@@ -124,6 +128,7 @@ public final class SseServerFactory implements StreamFactory
     private final ChallengeFW challengeRO = new ChallengeFW();
     private final WindowFW windowRO = new WindowFW();
     private final ResetFW resetRO = new ResetFW();
+    private final FlushFW flushRO = new FlushFW();
 
     private final SseBeginExFW.Builder sseBeginExRW = new SseBeginExFW.Builder();
 
@@ -149,6 +154,7 @@ public final class SseServerFactory implements StreamFactory
     private final LongUnaryOperator supplyInitialId;
     private final LongUnaryOperator supplyReplyId;
     private final LongSupplier supplyTraceId;
+    private final LongFunction<BudgetDebitor> supplyDebitor;
     private final DirectBuffer initialComment;
     private final int httpTypeId;
     private final int sseTypeId;
@@ -168,7 +174,8 @@ public final class SseServerFactory implements StreamFactory
         LongUnaryOperator supplyInitialId,
         LongUnaryOperator supplyReplyId,
         LongSupplier supplyTraceId,
-        ToIntFunction<String> supplyTypeId)
+        ToIntFunction<String> supplyTypeId,
+        LongFunction<BudgetDebitor> supplyDebitor)
     {
         this.router = requireNonNull(router);
         this.writeBuffer = requireNonNull(writeBuffer);
@@ -177,6 +184,7 @@ public final class SseServerFactory implements StreamFactory
         this.supplyInitialId = requireNonNull(supplyInitialId);
         this.supplyReplyId = requireNonNull(supplyReplyId);
         this.supplyTraceId = requireNonNull(supplyTraceId);
+        this.supplyDebitor = requireNonNull(supplyDebitor);
         this.correlations = new Long2ObjectHashMap<>();
         this.wrapRoute = this::wrapRoute;
         this.initialComment = config.initialComment();
@@ -552,6 +560,9 @@ public final class SseServerFactory implements StreamFactory
         private int networkReplyInjectedPadding = -1;
         private int networkReplyBudget;
         private int networkReplyPadding;
+        private long networkReplyAuthorization;
+        private BudgetDebitor networkReplyDebitor;
+        private long networkReplyDebitorIndex = NO_DEBITOR_INDEX;
 
         private int applicationReplyBudget;
 
@@ -665,8 +676,9 @@ public final class SseServerFactory implements StreamFactory
             final long traceId = data.traceId();
             final long authorization = data.authorization();
             final long budgetId = data.budgetId();
+            final int reserved = data.reserved();
 
-            applicationReplyBudget -= data.reserved();
+            applicationReplyBudget -= reserved;
 
             if (applicationReplyBudget < 0)
             {
@@ -694,22 +706,22 @@ public final class SseServerFactory implements StreamFactory
                     }
                 }
 
-                final int bytesWritten = doHttpData(
-                    networkReply,
-                    networkRouteId,
-                    networkReplyId,
-                    traceId,
-                    authorization,
-                    budgetId,
-                    flags,
-                    networkReplyPadding,
-                    payload,
-                    id,
-                    type,
-                    timestamp,
-                    null);
+                final SseEventFW sseEvent = sseEventRW.wrap(writeBuffer, DataFW.FIELD_OFFSET_PAYLOAD, writeBuffer.capacity())
+                        .flags(flags)
+                        .timestamp(timestamp)
+                        .id(id)
+                        .type(type)
+                        .data(payload)
+                        .build();
 
-                networkReplyBudget -= bytesWritten + networkReplyPadding;
+                //assert reserved >= sseEvent.sizeof() + networkReplyPadding;
+
+                doHttpData(networkReply, networkRouteId, networkReplyId,
+                        traceId, authorization, budgetId, flags, reserved, sseEvent);
+
+                networkReplyBudget -= reserved;
+
+                //assert networkReplyBudget >= 0;
             }
         }
 
@@ -747,6 +759,7 @@ public final class SseServerFactory implements StreamFactory
                 {
                     networkReply.accept(data.typeId(), data.buffer(), data.offset(), data.sizeof());
                     doHttpEnd(networkReply, networkRouteId, networkReplyId, traceId, authorization);
+                    cleanupDebitorIfNecessary();
                 }
                 else
                 {
@@ -761,6 +774,7 @@ public final class SseServerFactory implements StreamFactory
             else
             {
                 doHttpEnd(networkReply, networkRouteId, networkReplyId, traceId, authorization);
+                cleanupDebitorIfNecessary();
             }
         }
 
@@ -770,6 +784,7 @@ public final class SseServerFactory implements StreamFactory
             final long traceId = abort.traceId();
             final long authorization = abort.authorization();
             doHttpAbort(networkReply, networkRouteId, networkReplyId, traceId, authorization);
+            cleanupDebitorIfNecessary();
         }
 
         private void handleThrottle(
@@ -792,6 +807,10 @@ public final class SseServerFactory implements StreamFactory
                 final ChallengeFW challenge = challengeRO.wrap(buffer, index, index + length);
                 handleChallenge(challenge);
                 break;
+            case FlushFW.TYPE_ID:
+                final FlushFW flush = flushRO.wrap(buffer, index, index + length);
+                handleFlush(flush);
+                break;
             default:
                 // ignore
                 break;
@@ -810,76 +829,16 @@ public final class SseServerFactory implements StreamFactory
             networkReplyBudgetId = budgetId;
             networkReplyBudget += credit;
             networkReplyPadding = padding;
+            networkReplyAuthorization = authorization;
 
-            if (networkReplyInjectedPadding != 0)
+            if (networkReplyBudgetId != 0L && networkReplyDebitorIndex == NO_DEBITOR_INDEX)
             {
-                if (networkReplyInjectedPadding == -1)
-                {
-                    if (initialComment != null)
-                    {
-                        final int bytesWritten = doHttpData(
-                                networkReply,
-                                networkRouteId,
-                                networkReplyId,
-                                traceId,
-                                authorization,
-                                budgetId,
-                                FIN | INIT,
-                                networkReplyPadding,
-                                null,
-                                null,
-                                null,
-                                0L,
-                                initialComment);
-
-                        networkReplyInjectedPadding = bytesWritten + networkReplyPadding;
-                    }
-                    else
-                    {
-                        networkReplyInjectedPadding = 0;
-                    }
-                }
-                else
-                {
-                    final int networkReplyInjectedPaddingDebit = Math.min(networkReplyBudget, networkReplyInjectedPadding);
-                    networkReplyInjectedPadding -= networkReplyInjectedPaddingDebit;
-                    networkReplyBudget -= networkReplyInjectedPaddingDebit;
-                    assert networkReplyInjectedPadding >= 0;
-                    assert networkReplyBudget >= 0;
-                }
+                networkReplyDebitor = supplyDebitor.apply(budgetId);
+                networkReplyDebitorIndex = networkReplyDebitor.acquire(budgetId, networkReplyId, this::doFlush);
+                assert networkReplyDebitorIndex != NO_DEBITOR_INDEX;
             }
 
-            if (networkSlot != NO_SLOT)
-            {
-                final MutableDirectBuffer buffer = bufferPool.buffer(networkSlot);
-                final DataFW data = dataRO.wrap(buffer,  0,  networkSlotOffset);
-                final int networkReplyDebit = data.reserved();
-
-                if (networkReplyBudget >= networkReplyDebit)
-                {
-                    networkReply.accept(data.typeId(), data.buffer(), data.offset(), data.sizeof());
-                    networkReplyBudget -= networkReplyDebit;
-                    networkSlotOffset -= data.sizeof();
-                    assert networkSlotOffset == 0;
-                    bufferPool.release(networkSlot);
-                    networkSlot = NO_SLOT;
-
-                    if (deferredEnd)
-                    {
-                        doHttpEnd(networkReply, networkRouteId, networkReplyId, data.traceId(), data.authorization());
-                        deferredEnd = false;
-                    }
-                }
-            }
-
-            int applicationReplyPadding = networkReplyPadding + MAXIMUM_HEADER_SIZE + networkReplyInjectedPadding;
-            final int applicationReplyCredit = networkReplyBudget - applicationReplyBudget;
-            if (applicationReplyCredit > 0)
-            {
-                doWindow(applicationReplyThrottle, applicationRouteId, applicationReplyId, traceId, authorization,
-                         budgetId, applicationReplyCredit, applicationReplyPadding, 0);
-                applicationReplyBudget += applicationReplyCredit;
-            }
+            doFlush(traceId);
         }
 
         private void handleReset(
@@ -887,6 +846,7 @@ public final class SseServerFactory implements StreamFactory
         {
             final long traceId = reset.traceId();
             doReset(applicationReplyThrottle, applicationRouteId, applicationReplyId, traceId);
+            cleanupDebitorIfNecessary();
         }
 
         private void handleChallenge(
@@ -935,7 +895,7 @@ public final class SseServerFactory implements StreamFactory
                         .streamId(networkReplyId)
                         .traceId(challenge.traceId())
                         .authorization(0)
-                        .budgetId(networkReplyBudget)
+                        .budgetId(networkReplyBudgetId)
                         .reserved(sseEvent.sizeof() + networkReplyPadding)
                         .payload(sseEvent.buffer(), sseEvent.offset(), sseEvent.sizeof())
                         .build();
@@ -944,7 +904,6 @@ public final class SseServerFactory implements StreamFactory
                 if (networkReplyBudget > networkReplyDebit)
                 {
                     networkReplyBudget -= networkReplyDebit;
-
                     networkReply.accept(data.typeId(), data.buffer(), data.offset(), data.sizeof());
                 }
                 else
@@ -961,6 +920,106 @@ public final class SseServerFactory implements StreamFactory
                         networkSlotOffset += data.sizeof();
                     }
                 }
+            }
+        }
+
+        private void handleFlush(
+            FlushFW flush)
+        {
+            final long traceId = flush.traceId();
+
+            doFlush(traceId);
+        }
+
+        private void doFlush(
+            long traceId)
+        {
+            if (networkReplyInjectedPadding != 0)
+            {
+                if (networkReplyInjectedPadding == -1)
+                {
+                    if (initialComment != null)
+                    {
+                        final int flags = FIN | INIT;
+                        final SseEventFW sseEvent =
+                                sseEventRW.wrap(writeBuffer, DataFW.FIELD_OFFSET_PAYLOAD, writeBuffer.capacity())
+                                          .flags(flags)
+                                          .comment(initialComment)
+                                          .build();
+
+                        final int reserved = sseEvent.sizeof() + networkReplyPadding;
+
+                        int claimed = reserved;
+                        if (networkReplyDebitorIndex != NO_DEBITOR_INDEX)
+                        {
+                            claimed = networkReplyDebitor.claim(networkReplyDebitorIndex, applicationReplyId, reserved, reserved);
+                        }
+
+                        if (claimed == reserved)
+                        {
+                            doHttpData(networkReply, networkRouteId, networkReplyId,
+                                    traceId, networkReplyAuthorization, networkReplyBudgetId, flags, reserved, sseEvent);
+
+                            networkReplyInjectedPadding = reserved;
+                        }
+                    }
+                    else
+                    {
+                        networkReplyInjectedPadding = 0;
+                    }
+                }
+                else
+                {
+                    final int networkReplyInjectedPaddingDebit = Math.min(networkReplyBudget, networkReplyInjectedPadding);
+                    networkReplyInjectedPadding -= networkReplyInjectedPaddingDebit;
+                    networkReplyBudget -= networkReplyInjectedPaddingDebit;
+
+                    assert networkReplyInjectedPadding >= 0;
+                    assert networkReplyBudget >= 0;
+                }
+            }
+
+            if (networkSlot != NO_SLOT)
+            {
+                final MutableDirectBuffer buffer = bufferPool.buffer(networkSlot);
+                final DataFW data = dataRO.wrap(buffer,  0,  networkSlotOffset);
+                final int networkReplyDebit = data.reserved();
+
+                if (networkReplyBudget >= networkReplyDebit)
+                {
+                    networkReply.accept(data.typeId(), data.buffer(), data.offset(), data.sizeof());
+                    networkReplyBudget -= networkReplyDebit;
+                    networkSlotOffset -= data.sizeof();
+                    assert networkSlotOffset == 0;
+                    bufferPool.release(networkSlot);
+                    networkSlot = NO_SLOT;
+
+                    if (deferredEnd)
+                    {
+                        doHttpEnd(networkReply, networkRouteId, networkReplyId, data.traceId(), data.authorization());
+                        cleanupDebitorIfNecessary();
+                        deferredEnd = false;
+                    }
+                }
+            }
+
+            int applicationReplyPadding = networkReplyPadding + MAXIMUM_HEADER_SIZE + networkReplyInjectedPadding;
+            final int applicationReplyCredit = networkReplyBudget - applicationReplyBudget;
+            if (applicationReplyCredit > 0)
+            {
+                doWindow(applicationReplyThrottle, applicationRouteId, applicationReplyId, traceId, networkReplyAuthorization,
+                        networkReplyBudgetId, applicationReplyCredit, applicationReplyPadding, 0);
+                applicationReplyBudget += applicationReplyCredit;
+            }
+        }
+
+        private void cleanupDebitorIfNecessary()
+        {
+            if (networkReplyDebitorIndex != NO_DEBITOR_INDEX)
+            {
+                networkReplyDebitor.release(networkReplyDebitorIndex, networkReplyId);
+                networkReplyDebitor = null;
+                networkReplyDebitorIndex = NO_DEBITOR_INDEX;
             }
         }
     }
@@ -1011,7 +1070,7 @@ public final class SseServerFactory implements StreamFactory
                          .sizeof();
     }
 
-    private int doHttpData(
+    private void doHttpData(
         MessageConsumer receiver,
         long routeId,
         long streamId,
@@ -1019,22 +1078,9 @@ public final class SseServerFactory implements StreamFactory
         long authorization,
         long budgetId,
         int flags,
-        int padding,
-        OctetsFW data,
-        DirectBuffer id,
-        DirectBuffer type,
-        long timestamp,
-        DirectBuffer comment)
+        int reserved,
+        Flyweight payload)
     {
-        final SseEventFW sseEvent = sseEventRW.wrap(writeBuffer, DataFW.FIELD_OFFSET_PAYLOAD, writeBuffer.capacity())
-                .flags(flags)
-                .timestamp(timestamp)
-                .id(id)
-                .type(type)
-                .data(data)
-                .comment(comment)
-                .build();
-
         final DataFW frame = dataRW.wrap(writeBuffer, 0, writeBuffer.capacity())
                 .routeId(routeId)
                 .streamId(streamId)
@@ -1042,13 +1088,11 @@ public final class SseServerFactory implements StreamFactory
                 .authorization(authorization)
                 .flags(flags)
                 .budgetId(budgetId)
-                .reserved(sseEvent.sizeof() + padding)
-                .payload(sseEvent.buffer(), sseEvent.offset(), sseEvent.sizeof())
+                .reserved(reserved)
+                .payload(payload.buffer(), payload.offset(), payload.sizeof())
                 .build();
 
         receiver.accept(frame.typeId(), frame.buffer(), frame.offset(), frame.sizeof());
-
-        return frame.length();
     }
 
     private void doHttpEnd(
