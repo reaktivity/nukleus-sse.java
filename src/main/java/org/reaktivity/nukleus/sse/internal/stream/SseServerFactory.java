@@ -836,10 +836,17 @@ public final class SseServerFactory implements StreamFactory
             {
                 networkReplyDebitor = supplyDebitor.apply(budgetId);
                 networkReplyDebitorIndex = networkReplyDebitor.acquire(budgetId, networkReplyId, this::doFlush);
-                assert networkReplyDebitorIndex != NO_DEBITOR_INDEX;
             }
 
-            doFlush(traceId);
+            if (networkReplyBudgetId != 0L && networkReplyDebitorIndex == NO_DEBITOR_INDEX)
+            {
+                doHttpAbort(networkReply, networkRouteId, networkReplyId, traceId, authorization);
+                doReset(applicationReplyThrottle, applicationRouteId, applicationReplyId);
+            }
+            else
+            {
+                doFlush(traceId);
+            }
         }
 
         private void handleReset(
