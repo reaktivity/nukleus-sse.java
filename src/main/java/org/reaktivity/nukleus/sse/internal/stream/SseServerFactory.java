@@ -557,7 +557,6 @@ public final class SseServerFactory implements StreamFactory
         private MessageConsumer streamState;
 
         private long networkReplyBudgetId;
-        private int networkReplyInjectedPadding = -1;
         private int networkReplyBudget;
         private int networkReplyPadding;
         private long networkReplyAuthorization;
@@ -565,6 +564,7 @@ public final class SseServerFactory implements StreamFactory
         private long networkReplyDebitorIndex = NO_DEBITOR_INDEX;
 
         private int applicationReplyBudget;
+        private boolean initialCommentPending;
 
         private SseServerReply(
             MessageConsumer applicationReplyThrottle,
@@ -582,6 +582,7 @@ public final class SseServerFactory implements StreamFactory
             this.networkRouteId = networkRouteId;
             this.networkReplyId = networkReplyId;
             this.timestampRequested = timestampRequested;
+            this.initialCommentPending = initialComment != null;
             this.streamState = this::beforeBegin;
         }
 
@@ -934,48 +935,33 @@ public final class SseServerFactory implements StreamFactory
         private void doFlush(
             long traceId)
         {
-            if (networkReplyInjectedPadding != 0)
+            if (initialCommentPending)
             {
-                if (networkReplyInjectedPadding == -1)
+                assert initialComment != null;
+
+                final int flags = FIN | INIT;
+                final SseEventFW sseEvent =
+                        sseEventRW.wrap(writeBuffer, DataFW.FIELD_OFFSET_PAYLOAD, writeBuffer.capacity())
+                                  .flags(flags)
+                                  .comment(initialComment)
+                                  .build();
+
+                final int reserved = sseEvent.sizeof() + networkReplyPadding;
+
+                int claimed = reserved;
+                if (networkReplyDebitorIndex != NO_DEBITOR_INDEX)
                 {
-                    if (initialComment != null)
-                    {
-                        final int flags = FIN | INIT;
-                        final SseEventFW sseEvent =
-                                sseEventRW.wrap(writeBuffer, DataFW.FIELD_OFFSET_PAYLOAD, writeBuffer.capacity())
-                                          .flags(flags)
-                                          .comment(initialComment)
-                                          .build();
-
-                        final int reserved = sseEvent.sizeof() + networkReplyPadding;
-
-                        int claimed = reserved;
-                        if (networkReplyDebitorIndex != NO_DEBITOR_INDEX)
-                        {
-                            claimed = networkReplyDebitor.claim(networkReplyDebitorIndex, applicationReplyId, reserved, reserved);
-                        }
-
-                        if (claimed == reserved)
-                        {
-                            doHttpData(networkReply, networkRouteId, networkReplyId,
-                                    traceId, networkReplyAuthorization, networkReplyBudgetId, flags, reserved, sseEvent);
-
-                            networkReplyInjectedPadding = reserved;
-                        }
-                    }
-                    else
-                    {
-                        networkReplyInjectedPadding = 0;
-                    }
+                    claimed = networkReplyDebitor.claim(networkReplyDebitorIndex, applicationReplyId, reserved, reserved);
                 }
-                else
-                {
-                    final int networkReplyInjectedPaddingDebit = Math.min(networkReplyBudget, networkReplyInjectedPadding);
-                    networkReplyInjectedPadding -= networkReplyInjectedPaddingDebit;
-                    networkReplyBudget -= networkReplyInjectedPaddingDebit;
 
-                    assert networkReplyInjectedPadding >= 0;
-                    assert networkReplyBudget >= 0;
+                if (claimed == reserved)
+                {
+                    doHttpData(networkReply, networkRouteId, networkReplyId,
+                            traceId, networkReplyAuthorization, networkReplyBudgetId, flags, reserved, sseEvent);
+
+                    networkReplyBudget -= reserved;
+
+                    initialCommentPending = false;
                 }
             }
 
@@ -1003,7 +989,7 @@ public final class SseServerFactory implements StreamFactory
                 }
             }
 
-            int applicationReplyPadding = networkReplyPadding + MAXIMUM_HEADER_SIZE + networkReplyInjectedPadding;
+            int applicationReplyPadding = networkReplyPadding + MAXIMUM_HEADER_SIZE;
             final int applicationReplyCredit = networkReplyBudget - applicationReplyBudget;
             if (applicationReplyCredit > 0)
             {
