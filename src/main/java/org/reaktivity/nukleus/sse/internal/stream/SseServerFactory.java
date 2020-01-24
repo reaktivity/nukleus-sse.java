@@ -919,9 +919,9 @@ public final class SseServerFactory implements StreamFactory
                     MutableDirectBuffer buffer = bufferPool.buffer(networkSlot);
                     buffer.putBytes(networkSlotOffset, data.buffer(), data.offset(), data.sizeof());
                     networkSlotOffset += data.sizeof();
+                    deferredCredit += data.sizeof();
                 }
 
-                deferredCredit += networkSlotOffset;
 
                 doFlush(challenge.traceId());
             }
