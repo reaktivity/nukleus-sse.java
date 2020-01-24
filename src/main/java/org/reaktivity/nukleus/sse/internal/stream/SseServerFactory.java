@@ -552,6 +552,7 @@ public final class SseServerFactory implements StreamFactory
 
         private int networkSlot = NO_SLOT;
         int networkSlotOffset;
+        int deferredCredit;
         boolean deferredEnd;
 
         private MessageConsumer streamState;
@@ -908,26 +909,21 @@ public final class SseServerFactory implements StreamFactory
                         .payload(sseEvent.buffer(), sseEvent.offset(), sseEvent.sizeof())
                         .build();
 
-                final int networkReplyDebit = sseEvent.sizeof() + networkReplyPadding;
-                if (networkReplyBudget > networkReplyDebit)
+                if (networkSlot == NO_SLOT)
                 {
-                    networkReplyBudget -= networkReplyDebit;
-                    networkReply.accept(data.typeId(), data.buffer(), data.offset(), data.sizeof());
+                    networkSlot = bufferPool.acquire(networkReplyId);
                 }
-                else
-                {
-                    if (networkSlot == NO_SLOT)
-                    {
-                        networkSlot = bufferPool.acquire(networkReplyId);
-                    }
 
-                    if (networkSlot != NO_SLOT)
-                    {
-                        MutableDirectBuffer buffer = bufferPool.buffer(networkSlot);
-                        buffer.putBytes(networkSlotOffset, data.buffer(), data.offset(), data.sizeof());
-                        networkSlotOffset += data.sizeof();
-                    }
+                if (networkSlot != NO_SLOT)
+                {
+                    MutableDirectBuffer buffer = bufferPool.buffer(networkSlot);
+                    buffer.putBytes(networkSlotOffset, data.buffer(), data.offset(), data.sizeof());
+                    networkSlotOffset += data.sizeof();
                 }
+
+                deferredCredit += networkSlotOffset;
+
+                doFlush(challenge.traceId());
             }
         }
 
@@ -958,7 +954,7 @@ public final class SseServerFactory implements StreamFactory
                 int claimed = reserved;
                 if (networkReplyDebitorIndex != NO_DEBITOR_INDEX)
                 {
-                    claimed = networkReplyDebitor.claim(networkReplyDebitorIndex, applicationReplyId, reserved, reserved);
+                    claimed = networkReplyDebitor.claim(networkReplyDebitorIndex, networkReplyId, reserved, reserved);
                 }
 
                 if (claimed == reserved)
@@ -972,37 +968,57 @@ public final class SseServerFactory implements StreamFactory
                 }
             }
 
-            if (networkSlot != NO_SLOT)
+            if (deferredCredit > 0)
             {
-                final MutableDirectBuffer buffer = bufferPool.buffer(networkSlot);
-                final DataFW data = dataRO.wrap(buffer,  0,  networkSlotOffset);
-                final int networkReplyDebit = data.reserved();
+                final int reserved = deferredCredit + networkReplyPadding;
 
-                if (networkReplyBudget >= networkReplyDebit)
+                int claimed = reserved;
+
+                if (networkReplyDebitorIndex != NO_DEBITOR_INDEX)
                 {
-                    networkReply.accept(data.typeId(), data.buffer(), data.offset(), data.sizeof());
-                    networkReplyBudget -= networkReplyDebit;
-                    networkSlotOffset -= data.sizeof();
-                    assert networkSlotOffset == 0;
-                    bufferPool.release(networkSlot);
-                    networkSlot = NO_SLOT;
+                    claimed = networkReplyDebitor.claim(networkReplyDebitorIndex, networkReplyId, reserved, reserved);
+                }
 
-                    if (deferredEnd)
-                    {
-                        doHttpEnd(networkReply, networkRouteId, networkReplyId, data.traceId(), data.authorization());
-                        cleanupDebitorIfNecessary();
-                        deferredEnd = false;
-                    }
+                if (claimed == reserved)
+                {
+                    deferredCredit = 0;
                 }
             }
 
-            int applicationReplyPadding = networkReplyPadding + MAXIMUM_HEADER_SIZE;
-            final int applicationReplyCredit = networkReplyBudget - applicationReplyBudget;
-            if (applicationReplyCredit > 0)
+            if (deferredCredit == 0)
             {
-                doWindow(applicationReplyThrottle, applicationRouteId, applicationReplyId, traceId, networkReplyAuthorization,
+                if (networkSlot != NO_SLOT)
+                {
+                    final MutableDirectBuffer buffer = bufferPool.buffer(networkSlot);
+                    final DataFW data = dataRO.wrap(buffer,  0,  networkSlotOffset);
+                    final int networkReplyDebit = data.reserved();
+
+                    if (networkReplyBudget >= networkReplyDebit)
+                    {
+                        networkReply.accept(data.typeId(), data.buffer(), data.offset(), data.sizeof());
+                        networkReplyBudget -= networkReplyDebit;
+                        networkSlotOffset -= data.sizeof();
+                        assert networkSlotOffset == 0;
+                        bufferPool.release(networkSlot);
+                        networkSlot = NO_SLOT;
+
+                        if (deferredEnd)
+                        {
+                            doHttpEnd(networkReply, networkRouteId, networkReplyId, data.traceId(), data.authorization());
+                            cleanupDebitorIfNecessary();
+                            deferredEnd = false;
+                        }
+                    }
+                }
+
+                int applicationReplyPadding = networkReplyPadding + MAXIMUM_HEADER_SIZE;
+                final int applicationReplyCredit = networkReplyBudget - applicationReplyBudget;
+                if (applicationReplyCredit > 0)
+                {
+                    doWindow(applicationReplyThrottle, applicationRouteId, applicationReplyId, traceId, networkReplyAuthorization,
                         networkReplyBudgetId, applicationReplyCredit, applicationReplyPadding, 0);
-                applicationReplyBudget += applicationReplyCredit;
+                    applicationReplyBudget += applicationReplyCredit;
+                }
             }
         }
 
