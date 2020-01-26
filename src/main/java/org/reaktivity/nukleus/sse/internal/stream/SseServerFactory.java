@@ -919,7 +919,11 @@ public final class SseServerFactory implements StreamFactory
                     MutableDirectBuffer buffer = bufferPool.buffer(networkSlot);
                     buffer.putBytes(networkSlotOffset, data.buffer(), data.offset(), data.sizeof());
                     networkSlotOffset += data.sizeof();
-                    deferredClaim += data.reserved();
+
+                    if (networkReplyDebitorIndex != NO_DEBITOR_INDEX)
+                    {
+                        deferredClaim += data.reserved();
+                    }
                 }
 
 
@@ -970,12 +974,9 @@ public final class SseServerFactory implements StreamFactory
 
             if (deferredClaim > 0)
             {
-                int claimed = 0;
+                assert networkReplyDebitorIndex != NO_DEBITOR_INDEX;
 
-                if (networkReplyDebitorIndex != NO_DEBITOR_INDEX)
-                {
-                    claimed = networkReplyDebitor.claim(networkReplyDebitorIndex, networkReplyId, deferredClaim, deferredClaim);
-                }
+                int claimed = networkReplyDebitor.claim(networkReplyDebitorIndex, networkReplyId, deferredClaim, deferredClaim);
 
                 if (claimed == deferredClaim)
                 {
