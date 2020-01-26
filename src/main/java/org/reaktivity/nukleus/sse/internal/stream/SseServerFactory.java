@@ -552,7 +552,7 @@ public final class SseServerFactory implements StreamFactory
 
         private int networkSlot = NO_SLOT;
         int networkSlotOffset;
-        int deferredCredit;
+        int deferredClaim;
         boolean deferredEnd;
 
         private MessageConsumer streamState;
@@ -919,7 +919,7 @@ public final class SseServerFactory implements StreamFactory
                     MutableDirectBuffer buffer = bufferPool.buffer(networkSlot);
                     buffer.putBytes(networkSlotOffset, data.buffer(), data.offset(), data.sizeof());
                     networkSlotOffset += data.sizeof();
-                    deferredCredit += data.sizeof();
+                    deferredClaim += data.reserved();
                 }
 
 
@@ -968,24 +968,22 @@ public final class SseServerFactory implements StreamFactory
                 }
             }
 
-            if (deferredCredit > 0)
+            if (deferredClaim > 0)
             {
-                final int reserved = deferredCredit + networkReplyPadding;
-
-                int claimed = reserved;
+                int claimed = 0;
 
                 if (networkReplyDebitorIndex != NO_DEBITOR_INDEX)
                 {
-                    claimed = networkReplyDebitor.claim(networkReplyDebitorIndex, networkReplyId, reserved, reserved);
+                    claimed = networkReplyDebitor.claim(networkReplyDebitorIndex, networkReplyId, deferredClaim, deferredClaim);
                 }
 
-                if (claimed == reserved)
+                if (claimed == deferredClaim)
                 {
-                    deferredCredit = 0;
+                    deferredClaim = 0;
                 }
             }
 
-            if (deferredCredit == 0)
+            if (deferredClaim == 0)
             {
                 if (networkSlot != NO_SLOT)
                 {
