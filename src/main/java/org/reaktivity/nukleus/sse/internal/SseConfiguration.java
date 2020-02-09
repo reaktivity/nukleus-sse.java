@@ -1,5 +1,5 @@
 /**
- * Copyright 2016-2019 The Reaktivity Project
+ * Copyright 2016-2020 The Reaktivity Project
  *
  * The Reaktivity Project licenses this file to you under the Apache License,
  * version 2.0 (the "License"); you may not use this file except in compliance
@@ -21,9 +21,9 @@ import org.reaktivity.nukleus.Configuration;
 
 public class SseConfiguration extends Configuration
 {
-    public static final String CHALLENGE_EVENT_TYPE_NAME = "nukleus.sse.event.type";
+    public static final String CHALLENGE_EVENT_TYPE_NAME = "nukleus.sse.challenge.event.type";
 
-    public static final BooleanPropertyDef SSE_INITIAL_COMMENT_ENABLED;
+    public static final BooleanPropertyDef INITIAL_COMMENT_ENABLED;
 
     private static final DirectBuffer INITIAL_COMMENT_DEFAULT = new UnsafeBuffer(new byte[0]);
 
@@ -34,8 +34,8 @@ public class SseConfiguration extends Configuration
     static
     {
         final ConfigurationDef config = new ConfigurationDef("nukleus.sse");
-        SSE_INITIAL_COMMENT_ENABLED = config.property("initial.comment.enabled", false);
-        CHALLENGE_EVENT_TYPE = config.property("event.type", "challenge");
+        INITIAL_COMMENT_ENABLED = config.property("initial.comment.enabled", false);
+        CHALLENGE_EVENT_TYPE = config.property("challenge.event.type", "challenge");
         SSE_CONFIG = config;
     }
 
@@ -47,7 +47,7 @@ public class SseConfiguration extends Configuration
 
     public DirectBuffer initialComment()
     {
-        return SSE_INITIAL_COMMENT_ENABLED.getAsBoolean(this) ? INITIAL_COMMENT_DEFAULT : null;
+        return INITIAL_COMMENT_ENABLED.getAsBoolean(this) ? INITIAL_COMMENT_DEFAULT : null;
     }
 
     public String getChallengeEventType()
