@@ -696,7 +696,7 @@ public final class SseServerFactory implements StreamFactory
                 DirectBuffer id = null;
                 DirectBuffer type = null;
                 long timestamp = 0L;
-                if (extension.sizeof() > 0)
+                if (flags != 0x00 && extension.sizeof() > 0)
                 {
                     final SseDataExFW sseDataEx = extension.get(sseDataExRO::wrap);
                     id = sseDataEx.id().value();
@@ -710,20 +710,18 @@ public final class SseServerFactory implements StreamFactory
 
                 final SseEventFW sseEvent = sseEventRW.wrap(writeBuffer, DataFW.FIELD_OFFSET_PAYLOAD, writeBuffer.capacity())
                         .flags(flags)
+                        .dataFinOnly(payload)
                         .timestamp(timestamp)
                         .id(id)
                         .type(type)
-                        .data(payload)
+                        .dataInit(payload)
+                        .dataContOnly(payload)
                         .build();
-
-                //assert reserved >= sseEvent.sizeof() + networkReplyPadding;
 
                 doHttpData(networkReply, networkRouteId, networkReplyId,
                         traceId, authorization, budgetId, flags, reserved, sseEvent);
 
                 networkReplyBudget -= reserved;
-
-                //assert networkReplyBudget >= 0;
             }
         }
 
