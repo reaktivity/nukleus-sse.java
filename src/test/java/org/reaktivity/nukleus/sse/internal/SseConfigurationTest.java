@@ -18,7 +18,7 @@ package org.reaktivity.nukleus.sse.internal;
 import static org.junit.Assert.assertEquals;
 import static org.reaktivity.nukleus.sse.internal.SseConfiguration.CHALLENGE_EVENT_TYPE;
 import static org.reaktivity.nukleus.sse.internal.SseConfiguration.CHALLENGE_EVENT_TYPE_NAME;
-import static org.reaktivity.nukleus.sse.internal.SseConfiguration.SSE_INITIAL_COMMENT_ENABLED;
+import static org.reaktivity.nukleus.sse.internal.SseConfiguration.INITIAL_COMMENT_ENABLED;
 
 import org.junit.Test;
 
@@ -30,7 +30,7 @@ public class SseConfigurationTest
     @Test
     public void shouldVerifyConstants() throws Exception
     {
-        assertEquals(SSE_INITIAL_COMMENT_ENABLED.name(), SSE_INITIAL_COMMENT_ENABLED_NAME);
+        assertEquals(INITIAL_COMMENT_ENABLED.name(), SSE_INITIAL_COMMENT_ENABLED_NAME);
     }
 
     @Test
