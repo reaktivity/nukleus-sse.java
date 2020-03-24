@@ -54,7 +54,7 @@
     <nukleus.plugin.version>0.42</nukleus.plugin.version>
 
     <nukleus.sse.spec.version>0.43</nukleus.sse.spec.version>
-    <reaktor.version>0.115</reaktor.version>
+    <reaktor.version>0.128</reaktor.version>
   </properties>
 
   <dependencies>
