@@ -51,10 +51,10 @@
 
     <k3po.version>3.0.0-alpha-104</k3po.version>
 
-    <nukleus.plugin.version>develop-SNAPSHOT</nukleus.plugin.version>
+    <nukleus.plugin.version>0.46</nukleus.plugin.version>
 
-    <nukleus.sse.spec.version>develop-SNAPSHOT</nukleus.sse.spec.version>
-    <reaktor.version>develop-SNAPSHOT</reaktor.version>
+    <nukleus.sse.spec.version>0.45</nukleus.sse.spec.version>
+    <reaktor.version>0.130</reaktor.version>
   </properties>
 
   <dependencies>
