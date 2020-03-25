@@ -48,12 +48,12 @@ import org.reaktivity.nukleus.function.MessagePredicate;
 import org.reaktivity.nukleus.route.RouteManager;
 import org.reaktivity.nukleus.sse.internal.SseConfiguration;
 import org.reaktivity.nukleus.sse.internal.SseNukleus;
-import org.reaktivity.nukleus.sse.internal.types.ArrayFW;
+import org.reaktivity.nukleus.sse.internal.types.Array32FW;
 import org.reaktivity.nukleus.sse.internal.types.Flyweight;
 import org.reaktivity.nukleus.sse.internal.types.HttpHeaderFW;
 import org.reaktivity.nukleus.sse.internal.types.OctetsFW;
 import org.reaktivity.nukleus.sse.internal.types.String16FW;
-import org.reaktivity.nukleus.sse.internal.types.StringFW;
+import org.reaktivity.nukleus.sse.internal.types.String8FW;
 import org.reaktivity.nukleus.sse.internal.types.codec.SseEventFW;
 import org.reaktivity.nukleus.sse.internal.types.control.Capability;
 import org.reaktivity.nukleus.sse.internal.types.control.RouteFW;
@@ -81,11 +81,11 @@ public final class SseServerFactory implements StreamFactory
 {
     private static final String HTTP_TYPE_NAME = "http";
 
-    private static final StringFW HEADER_NAME_METHOD = new StringFW(":method");
-    private static final StringFW HEADER_NAME_STATUS = new StringFW(":status");
-    private static final StringFW HEADER_NAME_ACCESS_CONTROL_ALLOW_METHODS = new StringFW("access-control-allow-methods");
-    private static final StringFW HEADER_NAME_ACCESS_CONTROL_REQUEST_METHOD = new StringFW("access-control-request-method");
-    private static final StringFW HEADER_NAME_ACCESS_CONTROL_REQUEST_HEADERS = new StringFW("access-control-request-headers");
+    private static final String8FW HEADER_NAME_METHOD = new String8FW(":method");
+    private static final String8FW HEADER_NAME_STATUS = new String8FW(":status");
+    private static final String8FW HEADER_NAME_ACCESS_CONTROL_ALLOW_METHODS = new String8FW("access-control-allow-methods");
+    private static final String8FW HEADER_NAME_ACCESS_CONTROL_REQUEST_METHOD = new String8FW("access-control-request-method");
+    private static final String8FW HEADER_NAME_ACCESS_CONTROL_REQUEST_HEADERS = new String8FW("access-control-request-headers");
 
     private static final String16FW HEADER_VALUE_STATUS_204 = new String16FW("204");
     private static final String16FW HEADER_VALUE_STATUS_405 = new String16FW("405");
@@ -145,7 +145,7 @@ public final class SseServerFactory implements StreamFactory
 
     private final SseEventFW.Builder sseEventRW = new SseEventFW.Builder();
 
-    private final StringFW challengeEventType;
+    private final String8FW challengeEventType;
 
     private final RouteManager router;
     private final MutableDirectBuffer writeBuffer;
@@ -163,8 +163,8 @@ public final class SseServerFactory implements StreamFactory
 
     private final Long2ObjectHashMap<SseServerReply> correlations;
     private final MessageFunction<RouteFW> wrapRoute;
-    private final Consumer<ArrayFW.Builder<HttpHeaderFW.Builder, HttpHeaderFW>> setHttpResponseHeaders;
-    private final Consumer<ArrayFW.Builder<HttpHeaderFW.Builder, HttpHeaderFW>> setHttpResponseHeadersWithTimestampExt;
+    private final Consumer<Array32FW.Builder<HttpHeaderFW.Builder, HttpHeaderFW>> setHttpResponseHeaders;
+    private final Consumer<Array32FW.Builder<HttpHeaderFW.Builder, HttpHeaderFW>> setHttpResponseHeadersWithTimestampExt;
 
     public SseServerFactory(
         SseConfiguration config,
@@ -192,7 +192,7 @@ public final class SseServerFactory implements StreamFactory
         this.sseTypeId = supplyTypeId.applyAsInt(SseNukleus.NAME);
         this.setHttpResponseHeaders = this::setHttpResponseHeaders;
         this.setHttpResponseHeadersWithTimestampExt = this::setHttpResponseHeadersWithTimestampExt;
-        this.challengeEventType = new StringFW(config.getChallengeEventType());
+        this.challengeEventType = new String8FW(config.getChallengeEventType());
     }
 
     @Override
@@ -864,11 +864,11 @@ public final class SseServerFactory implements StreamFactory
             {
                 final JsonObject challengeObject = new JsonObject();
                 final JsonObject challengeHeaders = new JsonObject();
-                final ArrayFW<HttpHeaderFW> httpHeaders = httpChallengeEx.headers();
+                final Array32FW<HttpHeaderFW> httpHeaders = httpChallengeEx.headers();
 
                 httpHeaders.forEach(header ->
                 {
-                    final StringFW name = header.name();
+                    final String8FW name = header.name();
                     final String16FW value = header.value();
                     if (name != null)
                     {
@@ -1031,14 +1031,14 @@ public final class SseServerFactory implements StreamFactory
     }
 
     private void setHttpResponseHeaders(
-        ArrayFW.Builder<HttpHeaderFW.Builder, HttpHeaderFW> headers)
+        Array32FW.Builder<HttpHeaderFW.Builder, HttpHeaderFW> headers)
     {
         headers.item(h -> h.name(":status").value("200"));
         headers.item(h -> h.name("content-type").value("text/event-stream"));
     }
 
     private void setHttpResponseHeadersWithTimestampExt(
-        ArrayFW.Builder<HttpHeaderFW.Builder, HttpHeaderFW> headers)
+        Array32FW.Builder<HttpHeaderFW.Builder, HttpHeaderFW> headers)
     {
         headers.item(h -> h.name(":status").value("200"));
         headers.item(h -> h.name("content-type").value("text/event-stream;ext=timestamp"));
@@ -1051,7 +1051,7 @@ public final class SseServerFactory implements StreamFactory
         long traceId,
         long authorization,
         long affinity,
-        Consumer<ArrayFW.Builder<HttpHeaderFW.Builder, HttpHeaderFW>> mutator)
+        Consumer<Array32FW.Builder<HttpHeaderFW.Builder, HttpHeaderFW>> mutator)
     {
         final BeginFW begin = beginRW.wrap(writeBuffer, 0, writeBuffer.capacity())
                 .routeId(routeId)
@@ -1066,7 +1066,7 @@ public final class SseServerFactory implements StreamFactory
     }
 
     private Flyweight.Builder.Visitor visitHttpBeginEx(
-        Consumer<ArrayFW.Builder<HttpHeaderFW.Builder, HttpHeaderFW>> headers)
+        Consumer<Array32FW.Builder<HttpHeaderFW.Builder, HttpHeaderFW>> headers)
     {
         return (buffer, offset, limit) ->
             httpBeginExRW.wrap(buffer, offset, limit)
@@ -1276,7 +1276,7 @@ public final class SseServerFactory implements StreamFactory
     }
 
     private static void setCorsPreflightResponse(
-        ArrayFW.Builder<HttpHeaderFW.Builder, HttpHeaderFW> headers)
+        Array32FW.Builder<HttpHeaderFW.Builder, HttpHeaderFW> headers)
     {
         headers.item(h -> h.name(HEADER_NAME_STATUS).value(HEADER_VALUE_STATUS_204))
                .item(h -> h.name(HEADER_NAME_ACCESS_CONTROL_ALLOW_METHODS).value(CORS_ALLOWED_METHODS));
