@@ -6,7 +6,7 @@
   <modelVersion>4.0.0</modelVersion>
   <groupId>org.reaktivity</groupId>
   <artifactId>nukleus-sse</artifactId>
-  <version>0.68</version>
+  <version>0.69</version>
   <name>SSE Nukleus Implementation</name>
   <description>SSE Nukleus Implementation</description>
   <url>https://github.com/reaktivity/nukleus-sse.java</url>
@@ -51,10 +51,10 @@
 
     <k3po.version>3.0.0-alpha-104</k3po.version>
 
-    <nukleus.plugin.version>0.42</nukleus.plugin.version>
+    <nukleus.plugin.version>0.46</nukleus.plugin.version>
 
-    <nukleus.sse.spec.version>0.43</nukleus.sse.spec.version>
-    <reaktor.version>0.115</reaktor.version>
+    <nukleus.sse.spec.version>0.45</nukleus.sse.spec.version>
+    <reaktor.version>0.130</reaktor.version>
   </properties>
 
   <dependencies>
