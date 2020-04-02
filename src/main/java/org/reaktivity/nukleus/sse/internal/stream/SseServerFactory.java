@@ -755,21 +755,25 @@ public final class SseServerFactory implements StreamFactory
                     .payload(sseEvent.buffer(), sseEvent.offset(), sseEvent.sizeof())
                     .build();
 
-                if (networkReplyBudget >= sseEvent.sizeof() + networkReplyPadding)
+                if (networkSlot == NO_SLOT)
                 {
-                    networkReply.accept(data.typeId(), data.buffer(), data.offset(), data.sizeof());
-                    doHttpEnd(networkReply, networkRouteId, networkReplyId, traceId, authorization);
-                    cleanupDebitorIfNecessary();
-                }
-                else
-                {
-                    // Rare condition where there is insufficient window to write id: last_event_id\n\n
                     networkSlot = bufferPool.acquire(networkReplyId);
-                    MutableDirectBuffer buffer = bufferPool.buffer(networkSlot);
-                    buffer.putBytes(0, data.buffer(), data.offset(), data.sizeof());
-                    networkSlotOffset = data.sizeof();
-                    deferredEnd = true;
                 }
+
+                if (networkSlot != NO_SLOT)
+                {
+                    MutableDirectBuffer buffer = bufferPool.buffer(networkSlot);
+                    buffer.putBytes(networkSlotOffset, data.buffer(), data.offset(), data.sizeof());
+                    networkSlotOffset += data.sizeof();
+
+                    if (networkReplyDebitorIndex != NO_DEBITOR_INDEX)
+                    {
+                        deferredClaim += data.reserved();
+                    }
+                }
+
+                deferredEnd = true;
+                doFlush(traceId);
             }
             else
             {
