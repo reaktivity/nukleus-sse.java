@@ -776,6 +776,7 @@ public final class SseServerFactory implements StreamFactory
                 }
                 else
                 {
+                    cleanupDebitorIfNecessary();
                     doHttpAbort(networkReply, networkRouteId, networkReplyId, traceId, authorization);
                 }
             }
