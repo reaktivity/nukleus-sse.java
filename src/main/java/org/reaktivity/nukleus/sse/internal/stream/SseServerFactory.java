@@ -770,10 +770,14 @@ public final class SseServerFactory implements StreamFactory
                     {
                         deferredClaim += data.reserved();
                     }
-                }
 
-                deferredEnd = true;
-                doFlush(traceId);
+                    deferredEnd = true;
+                    doFlush(traceId);
+                }
+                else
+                {
+                    doHttpAbort(networkReply, networkRouteId, networkReplyId, traceId, authorization);
+                }
             }
             else
             {
