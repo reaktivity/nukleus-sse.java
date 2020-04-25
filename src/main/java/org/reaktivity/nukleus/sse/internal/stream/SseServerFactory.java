@@ -549,6 +549,7 @@ public final class SseServerFactory implements StreamFactory
         private final long networkReplyId;
 
         private final boolean timestampRequested;
+        private final MessageConsumer afterBeginOrData;
 
         private int networkSlot = NO_SLOT;
         int networkSlotOffset;
@@ -585,6 +586,7 @@ public final class SseServerFactory implements StreamFactory
             this.timestampRequested = timestampRequested;
             this.initialCommentPending = initialComment != null;
             this.streamState = this::beforeBegin;
+            this.afterBeginOrData = this::afterBeginOrData;
         }
 
         private void handleStream(
@@ -669,7 +671,9 @@ public final class SseServerFactory implements StreamFactory
                     setHttpResponseHeaders);
             }
 
-            this.streamState = this::afterBeginOrData;
+            this.streamState = afterBeginOrData;
+
+            doFlush(applicationReplyTraceId);
         }
 
         private void handleData(
@@ -772,7 +776,7 @@ public final class SseServerFactory implements StreamFactory
                     }
 
                     deferredEnd = true;
-                    doFlush(traceId);
+                    doFlushIfNecessary(traceId);
                 }
                 else
                 {
@@ -843,7 +847,7 @@ public final class SseServerFactory implements StreamFactory
             if (networkReplyBudgetId != 0L && networkReplyDebitorIndex == NO_DEBITOR_INDEX)
             {
                 networkReplyDebitor = supplyDebitor.apply(budgetId);
-                networkReplyDebitorIndex = networkReplyDebitor.acquire(budgetId, networkReplyId, this::doFlush);
+                networkReplyDebitorIndex = networkReplyDebitor.acquire(budgetId, networkReplyId, this::doFlushIfNecessary);
             }
 
             if (networkReplyBudgetId != 0L && networkReplyDebitorIndex == NO_DEBITOR_INDEX)
@@ -853,7 +857,7 @@ public final class SseServerFactory implements StreamFactory
             }
             else
             {
-                doFlush(traceId);
+                doFlushIfNecessary(traceId);
             }
         }
 
@@ -933,8 +937,7 @@ public final class SseServerFactory implements StreamFactory
                     }
                 }
 
-
-                doFlush(challenge.traceId());
+                doFlushIfNecessary(challenge.traceId());
             }
         }
 
@@ -943,7 +946,18 @@ public final class SseServerFactory implements StreamFactory
         {
             final long traceId = flush.traceId();
 
-            doFlush(traceId);
+            doFlushIfNecessary(traceId);
+        }
+
+        private void doFlushIfNecessary(
+            long traceId)
+        {
+            if (streamState == afterBeginOrData)
+            {
+                doFlush(traceId);
+            }
+
+            doWindowIfNecessary(traceId);
         }
 
         private void doFlush(
@@ -1016,15 +1030,19 @@ public final class SseServerFactory implements StreamFactory
                         }
                     }
                 }
+            }
+        }
 
-                int applicationReplyPadding = networkReplyPadding + MAXIMUM_HEADER_SIZE;
-                final int applicationReplyCredit = networkReplyBudget - applicationReplyBudget;
-                if (applicationReplyCredit > 0)
-                {
-                    doWindow(applicationReplyThrottle, applicationRouteId, applicationReplyId, traceId, networkReplyAuthorization,
-                        networkReplyBudgetId, applicationReplyCredit, applicationReplyPadding, 0);
-                    applicationReplyBudget += applicationReplyCredit;
-                }
+        private void doWindowIfNecessary(
+            long traceId)
+        {
+            int applicationReplyPadding = networkReplyPadding + MAXIMUM_HEADER_SIZE;
+            final int applicationReplyCredit = networkReplyBudget - applicationReplyBudget;
+            if (applicationReplyCredit > 0)
+            {
+                doWindow(applicationReplyThrottle, applicationRouteId, applicationReplyId, traceId, networkReplyAuthorization,
+                    networkReplyBudgetId, applicationReplyCredit, applicationReplyPadding, 0);
+                applicationReplyBudget += applicationReplyCredit;
             }
         }
 
