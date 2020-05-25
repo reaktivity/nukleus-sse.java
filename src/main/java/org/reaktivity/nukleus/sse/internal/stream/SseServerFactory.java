@@ -979,7 +979,8 @@ public final class SseServerFactory implements StreamFactory
                 int claimed = reserved;
                 if (networkReplyDebitorIndex != NO_DEBITOR_INDEX)
                 {
-                    claimed = networkReplyDebitor.claim(networkReplyDebitorIndex, networkReplyId, reserved, reserved);
+                    claimed = networkReplyDebitor.claim(traceId, networkReplyDebitorIndex, networkReplyId,
+                        reserved, reserved, 0);
                 }
 
                 if (claimed == reserved)
@@ -997,7 +998,8 @@ public final class SseServerFactory implements StreamFactory
             {
                 assert networkReplyDebitorIndex != NO_DEBITOR_INDEX;
 
-                int claimed = networkReplyDebitor.claim(networkReplyDebitorIndex, networkReplyId, deferredClaim, deferredClaim);
+                int claimed = networkReplyDebitor.claim(traceId, networkReplyDebitorIndex, networkReplyId,
+                    deferredClaim, deferredClaim, 0);
 
                 if (claimed == deferredClaim)
                 {
