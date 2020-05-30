@@ -839,6 +839,12 @@ public final class SseServerFactory implements StreamFactory
             final int credit = window.credit();
             final int padding = window.padding();
 
+            if (initialCommentPending && networkReplyBudget == 0)
+            {
+                assert initialComment != null;
+                networkReplyBudget -= initialComment.capacity() + 3 + padding;
+            }
+
             networkReplyBudgetId = budgetId;
             networkReplyBudget += credit;
             networkReplyPadding = padding;
