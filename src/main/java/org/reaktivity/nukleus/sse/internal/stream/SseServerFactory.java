@@ -555,7 +555,7 @@ public final class SseServerFactory implements StreamFactory
         int networkSlotOffset;
         int deferredClaim;
         boolean deferredEnd;
-        boolean dataReceived;
+        boolean messageReceived;
 
         private MessageConsumer streamState;
 
@@ -728,9 +728,9 @@ public final class SseServerFactory implements StreamFactory
 
                 networkReplyBudget -= reserved;
 
-                if (!dataReceived)
+                if (!messageReceived)
                 {
-                    dataReceived = true;
+                    messageReceived = true;
                 }
             }
         }
@@ -977,7 +977,7 @@ public final class SseServerFactory implements StreamFactory
         {
             if (initialCommentPending)
             {
-                if (!dataReceived)
+                if (!messageReceived)
                 {
                     assert initialComment != null;
 
