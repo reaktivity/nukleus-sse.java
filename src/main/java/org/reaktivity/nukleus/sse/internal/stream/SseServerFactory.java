@@ -555,6 +555,7 @@ public final class SseServerFactory implements StreamFactory
         int networkSlotOffset;
         int deferredClaim;
         boolean deferredEnd;
+        boolean dataReceived;
 
         private MessageConsumer streamState;
 
@@ -726,6 +727,11 @@ public final class SseServerFactory implements StreamFactory
                         traceId, authorization, budgetId, flags, reserved, sseEvent);
 
                 networkReplyBudget -= reserved;
+
+                if (!dataReceived)
+                {
+                    dataReceived = true;
+                }
             }
         }
 
@@ -971,32 +977,40 @@ public final class SseServerFactory implements StreamFactory
         {
             if (initialCommentPending)
             {
-                assert initialComment != null;
+                if (!dataReceived)
+                {
+                    assert initialComment != null;
 
-                final int flags = FIN | INIT;
-                final SseEventFW sseEvent =
+                    final int flags = FIN | INIT;
+                    final SseEventFW sseEvent =
                         sseEventRW.wrap(writeBuffer, DataFW.FIELD_OFFSET_PAYLOAD, writeBuffer.capacity())
                                   .flags(flags)
                                   .comment(initialComment)
                                   .build();
 
-                final int reserved = sseEvent.sizeof() + networkReplyPadding;
+                    final int reserved = sseEvent.sizeof() + networkReplyPadding;
 
-                int claimed = reserved;
-                if (networkReplyDebitorIndex != NO_DEBITOR_INDEX)
-                {
-                    claimed = networkReplyDebitor.claim(traceId, networkReplyDebitorIndex, networkReplyId,
-                        reserved, reserved, 0);
-                }
+                    int claimed = reserved;
+                    if (networkReplyDebitorIndex != NO_DEBITOR_INDEX)
+                    {
+                        claimed = networkReplyDebitor.claim(traceId, networkReplyDebitorIndex, networkReplyId,
+                            reserved, reserved, 0);
+                    }
 
-                if (claimed == reserved)
-                {
-                    doHttpData(networkReply, networkRouteId, networkReplyId,
+                    if (claimed == reserved)
+                    {
+                        doHttpData(networkReply, networkRouteId, networkReplyId,
                             traceId, networkReplyAuthorization, networkReplyBudgetId, flags, reserved, sseEvent);
 
-                    networkReplyBudget -= reserved;
+                        networkReplyBudget -= reserved;
 
+                        initialCommentPending = false;
+                    }
+                }
+                else
+                {
                     initialCommentPending = false;
+                    networkReplyBudget += initialComment.capacity() + 3 + networkReplyBudget;
                 }
             }
 
