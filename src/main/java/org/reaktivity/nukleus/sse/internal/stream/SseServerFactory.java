@@ -998,7 +998,7 @@ public final class SseServerFactory implements StreamFactory
                 if (claimed == reserved)
                 {
                     doHttpData(networkReply, networkRouteId, networkReplyId,
-                    traceId, networkReplyAuthorization, networkReplyBudgetId, flags, reserved, sseEvent);
+                        traceId, networkReplyAuthorization, networkReplyBudgetId, flags, reserved, sseEvent);
 
                     networkReplyBudget -= reserved;
 
