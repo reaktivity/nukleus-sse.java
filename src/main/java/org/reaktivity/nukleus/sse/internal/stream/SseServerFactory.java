@@ -555,7 +555,6 @@ public final class SseServerFactory implements StreamFactory
         int networkSlotOffset;
         int deferredClaim;
         boolean deferredEnd;
-        boolean messageReceived;
 
         private MessageConsumer streamState;
 
@@ -728,9 +727,10 @@ public final class SseServerFactory implements StreamFactory
 
                 networkReplyBudget -= reserved;
 
-                if (!messageReceived)
+                if (initialCommentPending)
                 {
-                    messageReceived = true;
+                    initialCommentPending = false;
+                    networkReplyBudget += initialComment.capacity() + 3;
                 }
             }
         }
@@ -977,40 +977,32 @@ public final class SseServerFactory implements StreamFactory
         {
             if (initialCommentPending)
             {
-                if (!messageReceived)
+                assert initialComment != null;
+
+                final int flags = FIN | INIT;
+                final SseEventFW sseEvent =
+                    sseEventRW.wrap(writeBuffer, DataFW.FIELD_OFFSET_PAYLOAD, writeBuffer.capacity())
+                              .flags(flags)
+                              .comment(initialComment)
+                              .build();
+
+                final int reserved = sseEvent.sizeof() + networkReplyPadding;
+
+                int claimed = reserved;
+                if (networkReplyDebitorIndex != NO_DEBITOR_INDEX)
                 {
-                    assert initialComment != null;
-
-                    final int flags = FIN | INIT;
-                    final SseEventFW sseEvent =
-                        sseEventRW.wrap(writeBuffer, DataFW.FIELD_OFFSET_PAYLOAD, writeBuffer.capacity())
-                                  .flags(flags)
-                                  .comment(initialComment)
-                                  .build();
-
-                    final int reserved = sseEvent.sizeof() + networkReplyPadding;
-
-                    int claimed = reserved;
-                    if (networkReplyDebitorIndex != NO_DEBITOR_INDEX)
-                    {
-                        claimed = networkReplyDebitor.claim(traceId, networkReplyDebitorIndex, networkReplyId,
-                            reserved, reserved, 0);
-                    }
-
-                    if (claimed == reserved)
-                    {
-                        doHttpData(networkReply, networkRouteId, networkReplyId,
-                            traceId, networkReplyAuthorization, networkReplyBudgetId, flags, reserved, sseEvent);
-
-                        networkReplyBudget -= reserved;
-
-                        initialCommentPending = false;
-                    }
+                    claimed = networkReplyDebitor.claim(traceId, networkReplyDebitorIndex, networkReplyId,
+                        reserved, reserved, 0);
                 }
-                else
+
+                if (claimed == reserved)
                 {
+                    doHttpData(networkReply, networkRouteId, networkReplyId,
+                        traceId, networkReplyAuthorization, networkReplyBudgetId, flags, reserved, sseEvent);
+
+                    networkReplyBudget -= reserved;
+
                     initialCommentPending = false;
-                    networkReplyBudget += initialComment.capacity() + 3 + networkReplyBudget;
                 }
             }
 
