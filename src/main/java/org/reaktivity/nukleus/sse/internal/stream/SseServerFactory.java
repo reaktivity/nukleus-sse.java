@@ -730,7 +730,7 @@ public final class SseServerFactory implements StreamFactory
                 if (initialCommentPending)
                 {
                     initialCommentPending = false;
-                    networkReplyBudget += initialComment.capacity() + 3;
+                    networkReplyBudget += initialComment.capacity() + 3 + networkReplyPadding;
                 }
             }
         }
