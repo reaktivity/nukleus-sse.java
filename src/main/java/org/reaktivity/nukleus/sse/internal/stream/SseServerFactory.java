@@ -981,10 +981,10 @@ public final class SseServerFactory implements StreamFactory
 
                 final int flags = FIN | INIT;
                 final SseEventFW sseEvent =
-                    sseEventRW.wrap(writeBuffer, DataFW.FIELD_OFFSET_PAYLOAD, writeBuffer.capacity())
-                              .flags(flags)
-                              .comment(initialComment)
-                              .build();
+                        sseEventRW.wrap(writeBuffer, DataFW.FIELD_OFFSET_PAYLOAD, writeBuffer.capacity())
+                                  .flags(flags)
+                                  .comment(initialComment)
+                                  .build();
 
                 final int reserved = sseEvent.sizeof() + networkReplyPadding;
 
