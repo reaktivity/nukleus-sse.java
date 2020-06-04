@@ -726,6 +726,12 @@ public final class SseServerFactory implements StreamFactory
                         traceId, authorization, budgetId, flags, reserved, sseEvent);
 
                 networkReplyBudget -= reserved;
+
+                if (initialCommentPending)
+                {
+                    initialCommentPending = false;
+                    networkReplyBudget += initialComment.capacity() + 3 + networkReplyPadding;
+                }
             }
         }
 
