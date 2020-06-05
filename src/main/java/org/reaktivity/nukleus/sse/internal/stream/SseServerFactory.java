@@ -315,7 +315,7 @@ public final class SseServerFactory implements StreamFactory
 
         // TODO: need lightweight approach (end)
 
-        MessageConsumer newStream =  (t, b, i, l) -> {};
+        MessageConsumer newStream = null;
 
         if (lastEventId == null || lastEventId.length() <= MAXIMUM_LAST_EVENT_ID_SIZE)
         {
@@ -375,6 +375,8 @@ public final class SseServerFactory implements StreamFactory
         else
         {
             doHttpResponse(begin, acceptReply, HEADER_VALUE_STATUS_400);
+
+            newStream = (t, b, i, l) -> {};
         }
 
         return newStream;
