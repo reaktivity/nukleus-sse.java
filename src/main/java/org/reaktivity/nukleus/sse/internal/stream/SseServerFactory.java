@@ -102,6 +102,7 @@ public final class SseServerFactory implements StreamFactory
     private static final byte ASCII_COLON = 0x3a;
     private static final String METHOD_PROPERTY = "method";
     private static final String HEADERS_PROPERTY = "headers";
+
     private static final int MAXIMUM_LAST_EVENT_ID_SIZE = 256;
 
     public static final int MAXIMUM_HEADER_SIZE =
@@ -250,16 +251,7 @@ public final class SseServerFactory implements StreamFactory
         }
         else if (!isSseRequestMethod(httpBeginEx))
         {
-            final long acceptRouteId = begin.routeId();
-            final long acceptInitialId = begin.streamId();
-            final long acceptReplyId = supplyReplyId.applyAsLong(acceptInitialId);
-            final long newTraceId = supplyTraceId.getAsLong();
-
-            doWindow(acceptReply, acceptRouteId, acceptInitialId, newTraceId, 0L, 0, 0, 0, 0);
-            doHttpBegin(acceptReply, acceptRouteId, acceptReplyId, newTraceId, 0L, affinity,
-                hs -> hs.item(h -> h.name(HEADER_NAME_STATUS).value(HEADER_VALUE_STATUS_405)));
-            doHttpEnd(acceptReply, acceptRouteId, acceptReplyId, newTraceId, 0L);
-
+            doHttpResponse(begin, acceptReply, HEADER_VALUE_STATUS_405);
             newStream = (t, b, i, l) -> {};
         }
         else
@@ -269,6 +261,8 @@ public final class SseServerFactory implements StreamFactory
 
         return newStream;
     }
+
+
 
     public MessageConsumer newInitialSseStream(
         final BeginFW begin,
@@ -292,11 +286,11 @@ public final class SseServerFactory implements StreamFactory
 
         String pathInfo = headers.get(":path"); // TODO: ":pathinfo" ?
         String lastEventId = headers.get("last-event-id");
-        boolean lastEventIdValid = lastEventId.length() > MAXIMUM_LAST_EVENT_ID_SIZE;
+        boolean lastEventIdValid = lastEventId != null && lastEventId.length()<= MAXIMUM_LAST_EVENT_ID_SIZE;
 
         // extract lastEventId query parameter from pathInfo
         // use query parameter value as default for missing Last-Event-ID header
-        if (pathInfo != null && !lastEventIdValid)
+        if (pathInfo != null && lastEventIdValid)
         {
             Matcher matcher = QUERY_PARAMS_PATTERN.matcher(pathInfo);
             if (matcher.matches())
@@ -311,7 +305,7 @@ public final class SseServerFactory implements StreamFactory
                     if (lastEventId == null)
                     {
                         lastEventId = decodeLastEventId(matcher.group("lastEventId"));
-                        lastEventIdValid = lastEventId.length() > MAXIMUM_LAST_EVENT_ID_SIZE;
+                        lastEventIdValid = lastEventId != null && lastEventId.length()<= MAXIMUM_LAST_EVENT_ID_SIZE;
                         if (!lastEventIdValid)
                         {
                             break;
@@ -387,14 +381,7 @@ public final class SseServerFactory implements StreamFactory
         }
         else
         {
-            final long acceptReplyId = supplyReplyId.applyAsLong(acceptInitialId);
-            final long newTraceId = supplyTraceId.getAsLong();
-
-            doWindow(acceptReply, acceptRouteId, acceptInitialId, newTraceId, 0L, 0, 0, 0, 0);
-            doHttpBegin(acceptReply, acceptRouteId, acceptReplyId, newTraceId, 0L, affinity,
-                hs -> hs.item(h -> h.name(HEADER_NAME_STATUS).value(HEADER_VALUE_STATUS_400)));
-            doHttpEnd(acceptReply, acceptRouteId, acceptReplyId, newTraceId, 0L);
-
+            doHttpResponse(begin, acceptReply, HEADER_VALUE_STATUS_400);
             newStream = (t, b, i, l) -> {};
         }
 
@@ -1197,6 +1184,23 @@ public final class SseServerFactory implements StreamFactory
                 .build();
 
         receiver.accept(abort.typeId(), abort.buffer(), abort.offset(), abort.sizeof());
+    }
+
+    private void doHttpResponse(
+        BeginFW begin,
+        MessageConsumer acceptReply,
+        String16FW statusCode)
+    {
+        final long acceptRouteId = begin.routeId();
+        final long acceptInitialId = begin.streamId();
+        final long acceptReplyId = supplyReplyId.applyAsLong(acceptInitialId);
+        final long affinity = begin.affinity();
+        final long newTraceId = supplyTraceId.getAsLong();
+
+        doWindow(acceptReply, acceptRouteId, acceptInitialId, newTraceId, 0L, 0, 0, 0, 0);
+        doHttpBegin(acceptReply, acceptRouteId, acceptReplyId, newTraceId, 0L, affinity,
+            hs -> hs.item(h -> h.name(HEADER_NAME_STATUS).value(statusCode)));
+        doHttpEnd(acceptReply, acceptRouteId, acceptReplyId, newTraceId, 0L);
     }
 
     private void doSseBegin(

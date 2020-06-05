@@ -17,7 +17,6 @@ package org.reaktivity.nukleus.sse.internal.streams.server;
 
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.junit.rules.RuleChain.outerRule;
-import static org.reaktivity.nukleus.sse.internal.stream.SseServerFactory.MAXIMUM_HEADER_SIZE;
 import static org.reaktivity.reaktor.test.ReaktorRule.EXTERNAL_AFFINITY_MASK;
 
 import org.junit.Rule;
@@ -25,7 +24,6 @@ import org.junit.Test;
 import org.junit.rules.DisableOnDebug;
 import org.junit.rules.TestRule;
 import org.junit.rules.Timeout;
-import org.kaazing.k3po.junit.annotation.ScriptProperty;
 import org.kaazing.k3po.junit.annotation.Specification;
 import org.kaazing.k3po.junit.rules.K3poRule;
 import org.reaktivity.reaktor.test.ReaktorRule;
@@ -53,9 +51,7 @@ public class IdIT
     @Test
     @Specification({
         "${route}/server/controller",
-        "${scripts}/reject.header.length.exceeding.255/request",
-        "${scripts}/reject.header.length.exceeding.255/response" })
-    @ScriptProperty("serverTransport \"nukleus://streams/sse#0\"")
+        "${scripts}/reject.header.length.exceeding.255/request" })
     public void shouldRejectHeaderLengthExceeding255() throws Exception
     {
         k3po.finish();
@@ -64,9 +60,7 @@ public class IdIT
     @Test
     @Specification({
         "${route}/server/controller",
-        "${scripts}/reject.query.param.length.exceeding.255/request",
-        "${scripts}/reject.query.param.length.exceeding.255/response" })
-    @ScriptProperty("serverTransport \"nukleus://streams/sse#0\"")
+        "${scripts}/reject.query.param.length.exceeding.255/request" })
     public void shouldRejectQueryParamLengthExceeding255() throws Exception
     {
         k3po.finish();
