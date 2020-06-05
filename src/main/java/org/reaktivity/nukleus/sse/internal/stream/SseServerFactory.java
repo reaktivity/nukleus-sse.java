@@ -89,6 +89,7 @@ public final class SseServerFactory implements StreamFactory
 
     private static final String16FW HEADER_VALUE_STATUS_204 = new String16FW("204");
     private static final String16FW HEADER_VALUE_STATUS_405 = new String16FW("405");
+    private static final String16FW HEADER_VALUE_STATUS_400 = new String16FW("400");
     private static final String16FW HEADER_VALUE_METHOD_GET = new String16FW("GET");
     private static final String16FW HEADER_VALUE_METHOD_OPTIONS = new String16FW("OPTIONS");
 
@@ -101,6 +102,8 @@ public final class SseServerFactory implements StreamFactory
     private static final byte ASCII_COLON = 0x3a;
     private static final String METHOD_PROPERTY = "method";
     private static final String HEADERS_PROPERTY = "headers";
+
+    private static final int MAXIMUM_LAST_EVENT_ID_SIZE = 255;
 
     public static final int MAXIMUM_HEADER_SIZE =
             5 +         // data:
@@ -160,6 +163,7 @@ public final class SseServerFactory implements StreamFactory
     private final int sseTypeId;
 
     private final Gson gson = new Gson();
+    private final Map<String, String> headers;
 
     private final Long2ObjectHashMap<SseServerReply> correlations;
     private final MessageFunction<RouteFW> wrapRoute;
@@ -193,6 +197,7 @@ public final class SseServerFactory implements StreamFactory
         this.setHttpResponseHeaders = this::setHttpResponseHeaders;
         this.setHttpResponseHeadersWithTimestampExt = this::setHttpResponseHeadersWithTimestampExt;
         this.challengeEventType = new String8FW(config.getChallengeEventType());
+        this.headers = new LinkedHashMap<>();
     }
 
     @Override
@@ -246,16 +251,7 @@ public final class SseServerFactory implements StreamFactory
         }
         else if (!isSseRequestMethod(httpBeginEx))
         {
-            final long acceptRouteId = begin.routeId();
-            final long acceptInitialId = begin.streamId();
-            final long acceptReplyId = supplyReplyId.applyAsLong(acceptInitialId);
-            final long newTraceId = supplyTraceId.getAsLong();
-
-            doWindow(acceptReply, acceptRouteId, acceptInitialId, newTraceId, 0L, 0, 0, 0, 0);
-            doHttpBegin(acceptReply, acceptRouteId, acceptReplyId, newTraceId, 0L, affinity,
-                hs -> hs.item(h -> h.name(HEADER_NAME_STATUS).value(HEADER_VALUE_STATUS_405)));
-            doHttpEnd(acceptReply, acceptRouteId, acceptReplyId, newTraceId, 0L);
-
+            doHttpResponse(begin, acceptReply, HEADER_VALUE_STATUS_405);
             newStream = (t, b, i, l) -> {};
         }
         else
@@ -265,6 +261,7 @@ public final class SseServerFactory implements StreamFactory
 
         return newStream;
     }
+
 
     public MessageConsumer newInitialSseStream(
         final BeginFW begin,
@@ -278,7 +275,7 @@ public final class SseServerFactory implements StreamFactory
         final long affinity = begin.affinity();
 
         // TODO: need lightweight approach (start)
-        final Map<String, String> headers = new LinkedHashMap<>();
+        headers.clear();
         httpBeginEx.headers().forEach(header ->
         {
             final String name = header.name().asString();
@@ -318,35 +315,35 @@ public final class SseServerFactory implements StreamFactory
 
         // TODO: need lightweight approach (end)
 
-        final MessagePredicate filter = (t, b, o, l) ->
-        {
-            final RouteFW route = routeRO.wrap(b, o, o + l);
-            final SseRouteExFW routeEx = route.extension().get(sseRouteExRO::tryWrap);
-            final String routePathInfo = routeEx != null ? routeEx.pathInfo().asString() : null;
-
-            // TODO: process pathInfo matching
-            //       && pathInfo.startsWith(routePathInfo);
-            return true;
-        };
-
         MessageConsumer newStream = null;
 
-        final RouteFW route = router.resolve(acceptRouteId, authorization, filter, wrapRoute);
-        if (route != null)
+        if (lastEventId == null || lastEventId.length() <= MAXIMUM_LAST_EVENT_ID_SIZE)
         {
-            final SseRouteExFW sseRouteEx = route.extension().get(sseRouteExRO::tryWrap);
+            final MessagePredicate filter = (t, b, o, l) ->
+            {
+                final RouteFW route = routeRO.wrap(b, o, o + l);
+                final SseRouteExFW routeEx = route.extension().get(sseRouteExRO::tryWrap);
+                final String routePathInfo = routeEx != null ? routeEx.pathInfo().asString() : null;
 
-            final long connectRouteId = route.correlationId();
-            final long connectInitialId = supplyInitialId.applyAsLong(connectRouteId);
-            final long connectReplyId = supplyReplyId.applyAsLong(connectInitialId);
-            final MessageConsumer connectInitial = router.supplyReceiver(connectInitialId);
+                // TODO: process pathInfo matching
+                //       && pathInfo.startsWith(routePathInfo);
+                return true;
+            };
 
-            final long acceptReplyId = supplyReplyId.applyAsLong(acceptInitialId);
+            final RouteFW route = router.resolve(acceptRouteId, authorization, filter, wrapRoute);
+            if (route != null)
+            {
+                final long connectRouteId = route.correlationId();
+                final long connectInitialId = supplyInitialId.applyAsLong(connectRouteId);
+                final long connectReplyId = supplyReplyId.applyAsLong(connectInitialId);
+                final MessageConsumer connectInitial = router.supplyReceiver(connectInitialId);
 
-            final boolean timestampRequested = httpBeginEx.headers().anyMatch(header ->
-                "accept".equals(header.name().asString()) && header.value().asString().contains("ext=timestamp"));
+                final long acceptReplyId = supplyReplyId.applyAsLong(acceptInitialId);
 
-            final SseServerInitial initialStream = new SseServerInitial(
+                final boolean timestampRequested = httpBeginEx.headers().anyMatch(header ->
+                    "accept".equals(header.name().asString()) && header.value().asString().contains("ext=timestamp"));
+
+                final SseServerInitial initialStream = new SseServerInitial(
                     acceptReply,
                     acceptRouteId,
                     acceptInitialId,
@@ -355,7 +352,7 @@ public final class SseServerFactory implements StreamFactory
                     connectRouteId,
                     connectInitialId);
 
-            final SseServerReply replyStream = new SseServerReply(
+                final SseServerReply replyStream = new SseServerReply(
                     connectInitial,
                     connectRouteId,
                     connectReplyId,
@@ -364,19 +361,28 @@ public final class SseServerFactory implements StreamFactory
                     acceptReplyId,
                     timestampRequested);
 
-            correlations.put(connectReplyId, replyStream);
+                correlations.put(connectReplyId, replyStream);
 
-            router.setThrottle(connectInitialId, initialStream::handleThrottle);
-            router.setThrottle(acceptReplyId, replyStream::handleThrottle);
+                router.setThrottle(connectInitialId, initialStream::handleThrottle);
+                router.setThrottle(acceptReplyId, replyStream::handleThrottle);
 
-            doSseBegin(connectInitial, connectRouteId, connectInitialId, traceId, authorization,
+                doSseBegin(connectInitial, connectRouteId, connectInitialId, traceId, authorization,
                     affinity, pathInfo, lastEventId);
 
-            newStream = initialStream::handleStream;
+                newStream = initialStream::handleStream;
+            }
+        }
+        else
+        {
+            doHttpResponse(begin, acceptReply, HEADER_VALUE_STATUS_400);
+
+            newStream = (t, b, i, l) -> {};
         }
 
         return newStream;
     }
+
+
 
     private MessageConsumer newReplyStream(
         final BeginFW begin,
@@ -1174,6 +1180,23 @@ public final class SseServerFactory implements StreamFactory
                 .build();
 
         receiver.accept(abort.typeId(), abort.buffer(), abort.offset(), abort.sizeof());
+    }
+
+    private void doHttpResponse(
+        BeginFW begin,
+        MessageConsumer acceptReply,
+        String16FW status)
+    {
+        final long acceptRouteId = begin.routeId();
+        final long acceptInitialId = begin.streamId();
+        final long acceptReplyId = supplyReplyId.applyAsLong(acceptInitialId);
+        final long affinity = begin.affinity();
+        final long traceId = begin.traceId();
+
+        doWindow(acceptReply, acceptRouteId, acceptInitialId, traceId, 0L, 0, 0, 0, 0);
+        doHttpBegin(acceptReply, acceptRouteId, acceptReplyId, traceId, 0L, affinity,
+            hs -> hs.item(h -> h.name(HEADER_NAME_STATUS).value(status)));
+        doHttpEnd(acceptReply, acceptRouteId, acceptReplyId, traceId, 0L);
     }
 
     private void doSseBegin(
