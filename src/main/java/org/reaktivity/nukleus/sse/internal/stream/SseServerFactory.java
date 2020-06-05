@@ -103,7 +103,7 @@ public final class SseServerFactory implements StreamFactory
     private static final String METHOD_PROPERTY = "method";
     private static final String HEADERS_PROPERTY = "headers";
 
-    private static final int MAXIMUM_LAST_EVENT_ID_SIZE = 256;
+    private static final int MAXIMUM_LAST_EVENT_ID_SIZE = 255;
 
     public static final int MAXIMUM_HEADER_SIZE =
             5 +         // data:
@@ -263,7 +263,6 @@ public final class SseServerFactory implements StreamFactory
     }
 
 
-
     public MessageConsumer newInitialSseStream(
         final BeginFW begin,
         final MessageConsumer acceptReply,
@@ -287,11 +286,9 @@ public final class SseServerFactory implements StreamFactory
         String pathInfo = headers.get(":path"); // TODO: ":pathinfo" ?
         String lastEventId = headers.get("last-event-id");
 
-        boolean lastEventIdValid = isLastEventIdValid(lastEventId);
-
         // extract lastEventId query parameter from pathInfo
         // use query parameter value as default for missing Last-Event-ID header
-        if (pathInfo != null && lastEventIdValid)
+        if (pathInfo != null)
         {
             Matcher matcher = QUERY_PARAMS_PATTERN.matcher(pathInfo);
             if (matcher.matches())
@@ -306,7 +303,6 @@ public final class SseServerFactory implements StreamFactory
                     if (lastEventId == null)
                     {
                         lastEventId = decodeLastEventId(matcher.group("lastEventId"));
-                        lastEventIdValid = isLastEventIdValid(lastEventId);
                     }
 
                     String replacement = matcher.group(3).isEmpty() ? "$3" : "$1";
@@ -319,9 +315,9 @@ public final class SseServerFactory implements StreamFactory
 
         // TODO: need lightweight approach (end)
 
-        MessageConsumer newStream = null;
+        MessageConsumer newStream =  (t, b, i, l) -> {};
 
-        if (lastEventIdValid)
+        if (lastEventId == null || lastEventId.length() <= MAXIMUM_LAST_EVENT_ID_SIZE)
         {
             final MessagePredicate filter = (t, b, o, l) ->
             {
@@ -379,7 +375,6 @@ public final class SseServerFactory implements StreamFactory
         else
         {
             doHttpResponse(begin, acceptReply, HEADER_VALUE_STATUS_400);
-            newStream = (t, b, i, l) -> {};
         }
 
         return newStream;
@@ -1188,7 +1183,7 @@ public final class SseServerFactory implements StreamFactory
     private void doHttpResponse(
         BeginFW begin,
         MessageConsumer acceptReply,
-        String16FW statusCode)
+        String16FW status)
     {
         final long acceptRouteId = begin.routeId();
         final long acceptInitialId = begin.streamId();
@@ -1198,7 +1193,7 @@ public final class SseServerFactory implements StreamFactory
 
         doWindow(acceptReply, acceptRouteId, acceptInitialId, traceId, 0L, 0, 0, 0, 0);
         doHttpBegin(acceptReply, acceptRouteId, acceptReplyId, traceId, 0L, affinity,
-            hs -> hs.item(h -> h.name(HEADER_NAME_STATUS).value(statusCode)));
+            hs -> hs.item(h -> h.name(HEADER_NAME_STATUS).value(status)));
         doHttpEnd(acceptReply, acceptRouteId, acceptReplyId, traceId, 0L);
     }
 
@@ -1330,19 +1325,6 @@ public final class SseServerFactory implements StreamFactory
         }
 
         return lastEventId;
-    }
-
-    private static boolean isLastEventIdValid(
-        String lastEventId)
-    {
-        boolean isValid = true;
-
-        if (lastEventId != null)
-        {
-            isValid = lastEventId.length() <= MAXIMUM_LAST_EVENT_ID_SIZE;
-        }
-
-        return isValid;
     }
 
     private static boolean isCorsPreflightRequest(
