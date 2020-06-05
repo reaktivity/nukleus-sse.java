@@ -286,7 +286,8 @@ public final class SseServerFactory implements StreamFactory
 
         String pathInfo = headers.get(":path"); // TODO: ":pathinfo" ?
         String lastEventId = headers.get("last-event-id");
-        boolean lastEventIdValid = lastEventId != null && lastEventId.length()<= MAXIMUM_LAST_EVENT_ID_SIZE;
+
+        boolean lastEventIdValid = isLastEventIdValid(lastEventId);
 
         // extract lastEventId query parameter from pathInfo
         // use query parameter value as default for missing Last-Event-ID header
@@ -305,11 +306,7 @@ public final class SseServerFactory implements StreamFactory
                     if (lastEventId == null)
                     {
                         lastEventId = decodeLastEventId(matcher.group("lastEventId"));
-                        lastEventIdValid = lastEventId != null && lastEventId.length()<= MAXIMUM_LAST_EVENT_ID_SIZE;
-                        if (!lastEventIdValid)
-                        {
-                            break;
-                        }
+                        lastEventIdValid = isLastEventIdValid(lastEventId);
                     }
 
                     String replacement = matcher.group(3).isEmpty() ? "$3" : "$1";
@@ -387,6 +384,8 @@ public final class SseServerFactory implements StreamFactory
 
         return newStream;
     }
+
+
 
     private MessageConsumer newReplyStream(
         final BeginFW begin,
@@ -1195,12 +1194,12 @@ public final class SseServerFactory implements StreamFactory
         final long acceptInitialId = begin.streamId();
         final long acceptReplyId = supplyReplyId.applyAsLong(acceptInitialId);
         final long affinity = begin.affinity();
-        final long newTraceId = supplyTraceId.getAsLong();
+        final long traceId = begin.traceId();
 
-        doWindow(acceptReply, acceptRouteId, acceptInitialId, newTraceId, 0L, 0, 0, 0, 0);
-        doHttpBegin(acceptReply, acceptRouteId, acceptReplyId, newTraceId, 0L, affinity,
+        doWindow(acceptReply, acceptRouteId, acceptInitialId, traceId, 0L, 0, 0, 0, 0);
+        doHttpBegin(acceptReply, acceptRouteId, acceptReplyId, traceId, 0L, affinity,
             hs -> hs.item(h -> h.name(HEADER_NAME_STATUS).value(statusCode)));
-        doHttpEnd(acceptReply, acceptRouteId, acceptReplyId, newTraceId, 0L);
+        doHttpEnd(acceptReply, acceptRouteId, acceptReplyId, traceId, 0L);
     }
 
     private void doSseBegin(
@@ -1331,6 +1330,19 @@ public final class SseServerFactory implements StreamFactory
         }
 
         return lastEventId;
+    }
+
+    private static boolean isLastEventIdValid(
+        String lastEventId)
+    {
+        boolean isValid = true;
+
+        if (lastEventId != null)
+        {
+            isValid = lastEventId.length() <= MAXIMUM_LAST_EVENT_ID_SIZE;
+        }
+
+        return isValid;
     }
 
     private static boolean isCorsPreflightRequest(
