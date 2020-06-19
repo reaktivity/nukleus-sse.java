@@ -883,8 +883,15 @@ public final class SseServerFactory implements StreamFactory
             ResetFW reset)
         {
             final long traceId = reset.traceId();
-            doReset(applicationReplyThrottle, applicationRouteId, applicationReplyId, traceId);
+            doSseResponseReset(traceId);
             cleanupDebitorIfNecessary();
+        }
+
+        private void doSseResponseReset(
+            long traceId)
+        {
+            correlations.remove(applicationReplyId);
+            doReset(applicationReplyThrottle, applicationRouteId, applicationReplyId, traceId);
         }
 
         private void handleChallenge(
