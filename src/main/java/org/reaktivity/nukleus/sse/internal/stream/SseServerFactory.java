@@ -103,7 +103,7 @@ public final class SseServerFactory implements StreamFactory
     private static final String METHOD_PROPERTY = "method";
     private static final String HEADERS_PROPERTY = "headers";
 
-    private static final int MAXIMUM_LAST_EVENT_ID_SIZE = 255;
+    private static final int MAXIMUM_LAST_EVENT_ID_SIZE = 254;
 
     public static final int MAXIMUM_HEADER_SIZE =
             5 +         // data:
