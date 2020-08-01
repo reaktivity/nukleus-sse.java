@@ -102,6 +102,15 @@ public class HandshakeIT
     @Test
     @Specification({
         "${route}/server/controller",
+        "${client}/request.header.last.event.id.overflow.multibyte/request" })
+    public void shouldFailHandshakeWithRequestHeaderLastEventIdOverflowMultibyte() throws Exception
+    {
+        k3po.finish();
+    }
+
+    @Test
+    @Specification({
+        "${route}/server/controller",
         "${client}/request.parameter.last.event.id/request",
         "${server}/last.event.id/response" })
     public void shouldHandshakeWithRequestParameterLastEventId() throws Exception

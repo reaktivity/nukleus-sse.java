@@ -26,8 +26,6 @@ import static org.reaktivity.nukleus.sse.internal.util.Flags.INIT;
 
 import java.io.UnsupportedEncodingException;
 import java.net.URLDecoder;
-import java.util.LinkedHashMap;
-import java.util.Map;
 import java.util.function.Consumer;
 import java.util.function.LongFunction;
 import java.util.function.LongSupplier;
@@ -82,10 +80,13 @@ public final class SseServerFactory implements StreamFactory
     private static final String HTTP_TYPE_NAME = "http";
 
     private static final String8FW HEADER_NAME_METHOD = new String8FW(":method");
+    private static final String8FW HEADER_NAME_PATH = new String8FW(":path");
     private static final String8FW HEADER_NAME_STATUS = new String8FW(":status");
+    private static final String8FW HEADER_NAME_ACCEPT = new String8FW("accept");
     private static final String8FW HEADER_NAME_ACCESS_CONTROL_ALLOW_METHODS = new String8FW("access-control-allow-methods");
     private static final String8FW HEADER_NAME_ACCESS_CONTROL_REQUEST_METHOD = new String8FW("access-control-request-method");
     private static final String8FW HEADER_NAME_ACCESS_CONTROL_REQUEST_HEADERS = new String8FW("access-control-request-headers");
+    private static final String8FW HEADER_NAME_LAST_EVENT_ID = new String8FW("last-event-id");
 
     private static final String16FW HEADER_VALUE_STATUS_204 = new String16FW("204");
     private static final String16FW HEADER_VALUE_STATUS_405 = new String16FW("405");
@@ -148,6 +149,8 @@ public final class SseServerFactory implements StreamFactory
 
     private final SseEventFW.Builder sseEventRW = new SseEventFW.Builder();
 
+    private final HttpDecodeHelper httpHelper = new HttpDecodeHelper();
+
     private final String8FW challengeEventType;
 
     private final RouteManager router;
@@ -163,7 +166,6 @@ public final class SseServerFactory implements StreamFactory
     private final int sseTypeId;
 
     private final Gson gson = new Gson();
-    private final Map<String, String> headers;
 
     private final Long2ObjectHashMap<SseServerReply> correlations;
     private final MessageFunction<RouteFW> wrapRoute;
@@ -197,7 +199,6 @@ public final class SseServerFactory implements StreamFactory
         this.setHttpResponseHeaders = this::setHttpResponseHeaders;
         this.setHttpResponseHeadersWithTimestampExt = this::setHttpResponseHeadersWithTimestampExt;
         this.challengeEventType = new String8FW(config.getChallengeEventType());
-        this.headers = new LinkedHashMap<>();
     }
 
     @Override
@@ -262,7 +263,6 @@ public final class SseServerFactory implements StreamFactory
         return newStream;
     }
 
-
     public MessageConsumer newInitialSseStream(
         final BeginFW begin,
         final MessageConsumer acceptReply,
@@ -274,23 +274,18 @@ public final class SseServerFactory implements StreamFactory
         final long authorization = begin.authorization();
         final long affinity = begin.affinity();
 
-        // TODO: need lightweight approach (start)
-        headers.clear();
-        httpBeginEx.headers().forEach(header ->
-        {
-            final String name = header.name().asString();
-            final String value = header.value().asString();
-            headers.merge(name, value, (v1, v2) -> String.format("%s, %s", v1, v2));
-        });
+        Array32FW<HttpHeaderFW> headers = httpBeginEx.headers();
+        httpHelper.reset();
+        headers.forEach(httpHelper::onHttpHeader);
 
-        String pathInfo = headers.get(":path"); // TODO: ":pathinfo" ?
-        String lastEventId = headers.get("last-event-id");
+        String16FW pathInfo = httpHelper.path; // TODO: ":pathinfo" ?
+        String16FW lastEventId = httpHelper.lastEventId;
 
         // extract lastEventId query parameter from pathInfo
         // use query parameter value as default for missing Last-Event-ID header
         if (pathInfo != null)
         {
-            Matcher matcher = QUERY_PARAMS_PATTERN.matcher(pathInfo);
+            Matcher matcher = QUERY_PARAMS_PATTERN.matcher(pathInfo.asString());
             if (matcher.matches())
             {
                 String path = matcher.group("path");
@@ -302,18 +297,16 @@ public final class SseServerFactory implements StreamFactory
                 {
                     if (lastEventId == null)
                     {
-                        lastEventId = decodeLastEventId(matcher.group("lastEventId"));
+                        lastEventId = new String16FW(decodeLastEventId(matcher.group("lastEventId")));
                     }
 
                     String replacement = matcher.group(3).isEmpty() ? "$3" : "$1";
                     matcher.appendReplacement(builder, replacement);
                 }
                 matcher.appendTail(builder);
-                pathInfo = builder.toString();
+                pathInfo = new String16FW(builder.toString());
             }
         }
-
-        // TODO: need lightweight approach (end)
 
         MessageConsumer newStream = null;
 
@@ -341,7 +334,9 @@ public final class SseServerFactory implements StreamFactory
                 final long acceptReplyId = supplyReplyId.applyAsLong(acceptInitialId);
 
                 final boolean timestampRequested = httpBeginEx.headers().anyMatch(header ->
-                    "accept".equals(header.name().asString()) && header.value().asString().contains("ext=timestamp"));
+                    HEADER_NAME_ACCEPT.equals(header.name()) && header.value().asString().contains("ext=timestamp"));
+
+                final String8FW lastEventId8 = httpHelper.asLastEventId(lastEventId);
 
                 final SseServerInitial initialStream = new SseServerInitial(
                     acceptReply,
@@ -367,7 +362,7 @@ public final class SseServerFactory implements StreamFactory
                 router.setThrottle(acceptReplyId, replyStream::handleThrottle);
 
                 doSseBegin(connectInitial, connectRouteId, connectInitialId, traceId, authorization,
-                    affinity, pathInfo, lastEventId);
+                    affinity, pathInfo, lastEventId8);
 
                 newStream = initialStream::handleStream;
             }
@@ -1084,6 +1079,46 @@ public final class SseServerFactory implements StreamFactory
         }
     }
 
+    private final class HttpDecodeHelper
+    {
+        private final String8FW.Builder lastEventIdRW = new String8FW.Builder().wrap(new UnsafeBuffer(new byte[256]), 0, 256);
+
+        private final String16FW pathRO = new String16FW();
+        private final String16FW lastEventIdRO = new String16FW();
+
+        private String16FW path;
+        private String16FW lastEventId;
+
+        private void onHttpHeader(
+            HttpHeaderFW header)
+        {
+            final String8FW name = header.name();
+            final String16FW value = header.value();
+
+            if (HEADER_NAME_PATH.equals(name))
+            {
+                path = pathRO.wrap(value.buffer(), value.offset(), value.limit());
+            }
+            else if (HEADER_NAME_LAST_EVENT_ID.equals(name))
+            {
+                lastEventId = lastEventIdRO.wrap(value.buffer(), value.offset(), value.limit());
+            }
+        }
+
+        private String8FW asLastEventId(
+            String16FW lastEventId)
+        {
+            lastEventIdRW.rewrap();
+            return lastEventId != null ? lastEventIdRW.set(lastEventId).build() : null;
+        }
+
+        private void reset()
+        {
+            path = null;
+            lastEventId = null;
+        }
+    }
+
     private void setHttpResponseHeaders(
         Array32FW.Builder<HttpHeaderFW.Builder, HttpHeaderFW> headers)
     {
@@ -1213,8 +1248,8 @@ public final class SseServerFactory implements StreamFactory
         long traceId,
         long authorization,
         long affinity,
-        String pathInfo,
-        String lastEventId)
+        String16FW pathInfo,
+        String8FW lastEventId)
     {
         final SseBeginExFW sseBegin = sseBeginExRW.wrap(writeBuffer, BeginFW.FIELD_OFFSET_EXTENSION, writeBuffer.capacity())
                 .typeId(sseTypeId)
