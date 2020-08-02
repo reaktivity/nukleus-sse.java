@@ -1368,7 +1368,7 @@ public final class SseServerFactory implements StreamFactory
             }
         }
 
-        return lastEventId != null && lastEventId.length() != 0 ? new String16FW(lastEventId) : null;
+        return lastEventId != null ? new String16FW(lastEventId) : null;
     }
 
     private static boolean isCorsPreflightRequest(

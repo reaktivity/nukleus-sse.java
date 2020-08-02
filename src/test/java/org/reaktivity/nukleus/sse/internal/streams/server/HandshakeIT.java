@@ -103,6 +103,16 @@ public class HandshakeIT
     @Test
     @Specification({
         "${route}/server/controller",
+        "${client}/request.header.last.event.id.empty/request",
+        "${server}/last.event.id.empty/response" })
+    public void shouldHandshakeWithRequestHeaderLastEventIdEmpty() throws Exception
+    {
+        k3po.finish();
+    }
+
+    @Test
+    @Specification({
+        "${route}/server/controller",
         "${client}/request.header.last.event.id.overflow/request" })
     public void shouldFailHandshakeWithRequestHeaderLastEventIdOverflow() throws Exception
     {
@@ -122,7 +132,7 @@ public class HandshakeIT
     @Specification({
         "${route}/server/controller",
         "${client}/request.parameter.last.event.id.empty/request",
-        "${server}/connection.succeeded/response" })
+        "${server}/last.event.id.empty/response" })
     public void shouldHandshakeWithRequestParameterLastEventIdEmpty() throws Exception
     {
         k3po.finish();
