@@ -53,6 +53,16 @@ public class HandshakeIT
 
     @Test
     @Specification({
+            "${route}/server/controller",
+            "${client}/connection.succeeded/request",
+            "${server}/connection.succeeded/response" })
+    public void shouldHandshake() throws Exception
+    {
+        k3po.finish();
+    }
+
+    @Test
+    @Specification({
         "${route}/server/controller",
         "${client}/cors.preflight/request" })
     public void shouldHandshakeWithCorsPreflight() throws Exception
@@ -104,6 +114,16 @@ public class HandshakeIT
         "${route}/server/controller",
         "${client}/request.header.last.event.id.overflow.multibyte/request" })
     public void shouldFailHandshakeWithRequestHeaderLastEventIdOverflowMultibyte() throws Exception
+    {
+        k3po.finish();
+    }
+
+    @Test
+    @Specification({
+        "${route}/server/controller",
+        "${client}/request.parameter.last.event.id.empty/request",
+        "${server}/connection.succeeded/response" })
+    public void shouldHandshakeWithRequestParameterLastEventIdEmpty() throws Exception
     {
         k3po.finish();
     }
