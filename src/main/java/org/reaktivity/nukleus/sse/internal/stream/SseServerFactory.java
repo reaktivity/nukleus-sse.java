@@ -297,7 +297,7 @@ public final class SseServerFactory implements StreamFactory
                 {
                     if (lastEventId == null)
                     {
-                        lastEventId = new String16FW(decodeLastEventId(matcher.group("lastEventId")));
+                        lastEventId = decodeLastEventId(matcher.group("lastEventId"));
                     }
 
                     String replacement = matcher.group(3).isEmpty() ? "$3" : "$1";
@@ -1352,7 +1352,7 @@ public final class SseServerFactory implements StreamFactory
         doReset(sender, routeId, streamId, supplyTraceId.getAsLong());
     }
 
-    private static String decodeLastEventId(
+    private static String16FW decodeLastEventId(
         String lastEventId)
     {
         if (lastEventId != null && lastEventId.indexOf('%') != -1)
@@ -1368,7 +1368,7 @@ public final class SseServerFactory implements StreamFactory
             }
         }
 
-        return lastEventId;
+        return lastEventId != null && lastEventId.length() != 0 ? new String16FW(lastEventId) : null;
     }
 
     private static boolean isCorsPreflightRequest(
