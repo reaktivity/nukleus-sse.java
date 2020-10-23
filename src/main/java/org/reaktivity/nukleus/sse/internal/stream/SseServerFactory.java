@@ -125,16 +125,17 @@ public final class SseServerFactory implements StreamFactory
     private final DataFW dataRO = new DataFW();
     private final EndFW endRO = new EndFW();
     private final AbortFW abortRO = new AbortFW();
+    private final FlushFW flushRO = new FlushFW();
 
     private final BeginFW.Builder beginRW = new BeginFW.Builder();
     private final DataFW.Builder dataRW = new DataFW.Builder();
     private final EndFW.Builder endRW = new EndFW.Builder();
     private final AbortFW.Builder abortRW = new AbortFW.Builder();
+    private final FlushFW.Builder flushRW = new FlushFW.Builder();
 
     private final ChallengeFW challengeRO = new ChallengeFW();
     private final WindowFW windowRO = new WindowFW();
     private final ResetFW resetRO = new ResetFW();
-    private final FlushFW flushRO = new FlushFW();
 
     private final SseBeginExFW.Builder sseBeginExRW = new SseBeginExFW.Builder();
 
@@ -712,6 +713,10 @@ public final class SseServerFactory implements StreamFactory
                 final AbortFW abort = abortRO.wrap(buffer, index, index + length);
                 handleAbort(abort);
                 break;
+            case FlushFW.TYPE_ID:
+                final FlushFW flush = flushRO.wrap(buffer, index, index + length);
+                handleFlush(flush);
+                break;
             default:
                 final FrameFW frame = frameRO.wrap(buffer, index, index + length);
                 final long sequence = frame.sequence();
@@ -917,6 +922,28 @@ public final class SseServerFactory implements StreamFactory
             }
         }
 
+        private void handleFlush(
+            FlushFW flush)
+        {
+            final long sequence = flush.sequence();
+            final long acknowledge = flush.acknowledge();
+            final long traceId = flush.traceId();
+            final long authorization = flush.authorization();
+            final long budgetId = flush.budgetId();
+            final int reserved = flush.reserved();
+
+            assert acknowledge <= sequence;
+            assert sequence >= sseReplySeq;
+
+            sseReplySeq = sequence;
+
+            assert sseReplyAck <= sseReplySeq;
+
+            doFlushIfNecessary(traceId);
+            doHttpFlush(networkReply, networkRouteId, networkReplyId, httpReplySeq, httpReplyAck, httpReplyMax,
+                    traceId, authorization, budgetId, reserved);
+        }
+
         private void handleAbort(
             AbortFW abort)
         {
@@ -956,10 +983,6 @@ public final class SseServerFactory implements StreamFactory
             case ChallengeFW.TYPE_ID:
                 final ChallengeFW challenge = challengeRO.wrap(buffer, index, index + length);
                 handleChallenge(challenge);
-                break;
-            case FlushFW.TYPE_ID:
-                final FlushFW flush = flushRO.wrap(buffer, index, index + length);
-                handleFlush(flush);
                 break;
             default:
                 // ignore
@@ -1012,7 +1035,21 @@ public final class SseServerFactory implements StreamFactory
         private void handleReset(
             ResetFW reset)
         {
+            final long sequence = reset.sequence();
+            final long acknowledge = reset.acknowledge();
+            final int maximum = reset.maximum();
             final long traceId = reset.traceId();
+
+            assert acknowledge <= sequence;
+            assert sequence <= httpReplySeq;
+            assert acknowledge >= httpReplyAck;
+            assert maximum >= httpReplyMax;
+
+            httpReplyAck = acknowledge;
+            httpReplyMax = maximum;
+
+            assert httpReplyAck <= httpReplySeq;
+
             doSseResponseReset(traceId);
             cleanupDebitorIfNecessary();
         }
@@ -1028,6 +1065,20 @@ public final class SseServerFactory implements StreamFactory
         private void handleChallenge(
             ChallengeFW challenge)
         {
+            final long sequence = challenge.sequence();
+            final long acknowledge = challenge.acknowledge();
+            final int maximum = challenge.maximum();
+
+            assert acknowledge <= sequence;
+            assert sequence <= httpReplySeq;
+            assert acknowledge >= httpReplyAck;
+            assert maximum >= httpReplyMax;
+
+            httpReplyAck = acknowledge;
+            httpReplyMax = maximum;
+
+            assert httpReplyAck <= httpReplySeq;
+
             final HttpChallengeExFW httpChallengeEx = challenge.extension().get(httpChallengeExRO::tryWrap);
             if (httpChallengeEx != null)
             {
@@ -1098,14 +1149,6 @@ public final class SseServerFactory implements StreamFactory
 
                 doFlushIfNecessary(challenge.traceId());
             }
-        }
-
-        private void handleFlush(
-            FlushFW flush)
-        {
-            final long traceId = flush.traceId();
-
-            doFlushIfNecessary(traceId);
         }
 
         private void doFlushIfNecessary(
@@ -1405,6 +1448,33 @@ public final class SseServerFactory implements StreamFactory
                 .build();
 
         receiver.accept(abort.typeId(), abort.buffer(), abort.offset(), abort.sizeof());
+    }
+
+    private void doHttpFlush(
+        MessageConsumer receiver,
+        long routeId,
+        long streamId,
+        long sequence,
+        long acknowledge,
+        int maximum,
+        long traceId,
+        long authorization,
+        long budgetId,
+        int reserved)
+    {
+        final FlushFW flush = flushRW.wrap(writeBuffer, 0, writeBuffer.capacity())
+                .routeId(routeId)
+                .streamId(streamId)
+                .sequence(sequence)
+                .acknowledge(acknowledge)
+                .maximum(maximum)
+                .traceId(traceId)
+                .authorization(authorization)
+                .budgetId(budgetId)
+                .reserved(reserved)
+                .build();
+
+        receiver.accept(flush.typeId(), flush.buffer(), flush.offset(), flush.sizeof());
     }
 
     private void doHttpResponse(
