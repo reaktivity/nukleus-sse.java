@@ -6,7 +6,7 @@
   <modelVersion>4.0.0</modelVersion>
   <groupId>org.reaktivity</groupId>
   <artifactId>nukleus-sse</artifactId>
-  <version>0.82</version>
+  <version>0.83</version>
   <name>SSE Nukleus Implementation</name>
   <description>SSE Nukleus Implementation</description>
   <url>https://github.com/reaktivity/nukleus-sse.java</url>
@@ -45,16 +45,16 @@
     <jacoco.coverage.ratio>0.81</jacoco.coverage.ratio>
     <jacoco.missed.count>1</jacoco.missed.count>
 
-    <junit.version>4.12</junit.version>
+    <junit.version>4.13.1</junit.version>
     <jmh.version>1.17.4</jmh.version>
     <jmh.profilers.version>0.1.3</jmh.profilers.version>
 
-    <k3po.version>3.0.0</k3po.version>
+    <k3po.version>3.1.0</k3po.version>
 
-    <nukleus.plugin.version>0.64</nukleus.plugin.version>
+    <nukleus.plugin.version>0.77</nukleus.plugin.version>
 
-    <nukleus.sse.spec.version>0.52</nukleus.sse.spec.version>
-    <reaktor.version>0.140</reaktor.version>
+    <nukleus.sse.spec.version>0.53</nukleus.sse.spec.version>
+    <reaktor.version>0.152</reaktor.version>
   </properties>
 
   <dependencies>
@@ -168,10 +168,7 @@
         <artifactId>maven-checkstyle-plugin</artifactId>
         <version>3.1.0</version>
         <configuration>
-          <sourceDirectories>
-            <sourceDirectory>${project.build.sourceDirectory}</sourceDirectory>
-            <sourceDirectory>${project.build.testSourceDirectory}</sourceDirectory>
-          </sourceDirectories>
+          <includeTestSourceDirectory>true</includeTestSourceDirectory>
         </configuration>
         <executions>
           <execution>
@@ -197,7 +194,7 @@
       <plugin>
         <groupId>org.jacoco</groupId>
         <artifactId>jacoco-maven-plugin</artifactId>
-        <version>0.8.5</version>
+        <version>0.8.6</version>
         <configuration>
           <excludes>
             <exclude>org/reaktivity/nukleus/sse/internal/types/**/*.class</exclude>
