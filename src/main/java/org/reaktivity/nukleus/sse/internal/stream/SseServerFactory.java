@@ -101,6 +101,8 @@ public final class SseServerFactory implements StreamFactory
     private static final Pattern QUERY_PARAMS_PATTERN = Pattern.compile("(?<path>[^?]*)(?<query>[\\?].*)");
     private static final Pattern LAST_EVENT_ID_PATTERN = Pattern.compile("(\\?|&)lastEventId=(?<lastEventId>[^&]*)(&|$)");
 
+    private static final String8FW LAST_EVENT_ID_NULL = new String8FW(null);
+
     private static final byte ASCII_COLON = 0x3a;
     private static final String METHOD_PROPERTY = "method";
     private static final String HEADERS_PROPERTY = "headers";
@@ -1311,7 +1313,7 @@ public final class SseServerFactory implements StreamFactory
             String16FW lastEventId)
         {
             lastEventIdRW.rewrap();
-            return lastEventId != null ? lastEventIdRW.set(lastEventId).build() : null;
+            return lastEventId != null ? lastEventIdRW.set(lastEventId).build() : LAST_EVENT_ID_NULL;
         }
 
         private void reset()
