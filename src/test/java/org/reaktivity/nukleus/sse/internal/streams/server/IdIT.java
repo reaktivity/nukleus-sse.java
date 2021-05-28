@@ -17,7 +17,6 @@ package org.reaktivity.nukleus.sse.internal.streams.server;
 
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.junit.rules.RuleChain.outerRule;
-import static org.reaktivity.reaktor.test.ReaktorRule.EXTERNAL_AFFINITY_MASK;
 
 import org.junit.Rule;
 import org.junit.Test;
@@ -27,12 +26,12 @@ import org.junit.rules.Timeout;
 import org.kaazing.k3po.junit.annotation.Specification;
 import org.kaazing.k3po.junit.rules.K3poRule;
 import org.reaktivity.reaktor.test.ReaktorRule;
+import org.reaktivity.reaktor.test.annotation.Configuration;
 
 public class IdIT
 {
     private final K3poRule k3po = new K3poRule()
-            .addScriptRoot("route", "org/reaktivity/specification/nukleus/sse/control/route")
-            .addScriptRoot("scripts", "org/reaktivity/specification/sse/id");
+        .addScriptRoot("net", "org/reaktivity/specification/nukleus/sse/streams/network/id");
 
     private final TestRule timeout = new DisableOnDebug(new Timeout(10, SECONDS));
 
@@ -41,26 +40,26 @@ public class IdIT
         .commandBufferCapacity(1024)
         .responseBufferCapacity(1024)
         .counterValuesBufferCapacity(4096)
-        .nukleus("sse"::equals)
-        .affinityMask("target#0", EXTERNAL_AFFINITY_MASK)
+        .counterValuesBufferCapacity(4096)
+        .configurationRoot("org/reaktivity/specification/nukleus/sse/config")
         .clean();
 
     @Rule
     public final TestRule chain = outerRule(reaktor).around(k3po).around(timeout);
 
     @Test
+    @Configuration("server.when.json")
     @Specification({
-        "${route}/server/controller",
-        "${scripts}/reject.header.length.exceeding.255/request" })
+        "${net}/reject.header.length.exceeding.255/request" })
     public void shouldRejectHeaderLengthExceeding255() throws Exception
     {
         k3po.finish();
     }
 
     @Test
+    @Configuration("server.when.json")
     @Specification({
-        "${route}/server/controller",
-        "${scripts}/reject.query.param.length.exceeding.255/request" })
+        "${net}/reject.query.param.length.exceeding.255/request" })
     public void shouldRejectQueryParamLengthExceeding255() throws Exception
     {
         k3po.finish();

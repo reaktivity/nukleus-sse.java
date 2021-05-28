@@ -13,16 +13,24 @@
  * License for the specific language governing permissions and limitations
  * under the License.
  */
-module org.reaktivity.nukleus.sse
+package org.reaktivity.nukleus.sse.internal.config;
+
+import org.reaktivity.reaktor.config.Options;
+
+public final class SseOptions extends Options
 {
-    requires org.reaktivity.reaktor;
+    static final int RETRY_DEFAULT = 2000;
 
-    provides org.reaktivity.nukleus.NukleusFactorySpi
-        with org.reaktivity.nukleus.sse.internal.SseNukleusFactorySpi;
+    public int retry;
 
-    provides org.reaktivity.reaktor.config.OptionsAdapterSpi
-        with org.reaktivity.nukleus.sse.internal.config.SseOptionsAdapter;
+    public SseOptions()
+    {
+        this(RETRY_DEFAULT);
+    }
 
-    provides org.reaktivity.reaktor.config.ConditionAdapterSpi
-        with org.reaktivity.nukleus.sse.internal.config.SseConditionAdapter;
+    public SseOptions(
+        int retry)
+    {
+        this.retry = retry;
+    }
 }
