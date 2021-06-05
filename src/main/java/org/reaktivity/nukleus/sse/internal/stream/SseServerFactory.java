@@ -33,6 +33,9 @@ import java.util.function.ToLongFunction;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import javax.json.Json;
+import javax.json.JsonObjectBuilder;
+
 import org.agrona.DirectBuffer;
 import org.agrona.MutableDirectBuffer;
 import org.agrona.collections.Long2ObjectHashMap;
@@ -69,9 +72,6 @@ import org.reaktivity.reaktor.nukleus.budget.BudgetDebitor;
 import org.reaktivity.reaktor.nukleus.buffer.BufferPool;
 import org.reaktivity.reaktor.nukleus.function.MessageConsumer;
 import org.reaktivity.reaktor.nukleus.stream.StreamFactory;
-
-import com.google.gson.Gson;
-import com.google.gson.JsonObject;
 
 public final class SseServerFactory implements SseStreamFactory
 {
@@ -162,8 +162,6 @@ public final class SseServerFactory implements SseStreamFactory
     private final DirectBuffer initialComment;
     private final int httpTypeId;
     private final int sseTypeId;
-
-    private final Gson gson = new Gson();
 
     private final Long2ObjectHashMap<SseBinding> bindings;
     private final Consumer<Array32FW.Builder<HttpHeaderFW.Builder, HttpHeaderFW>> setHttpResponseHeaders;
@@ -563,8 +561,8 @@ public final class SseServerFactory implements SseStreamFactory
             final HttpChallengeExFW httpChallengeEx = challenge.extension().get(httpChallengeExRO::tryWrap);
             if (httpChallengeEx != null)
             {
-                final JsonObject challengeObject = new JsonObject();
-                final JsonObject challengeHeaders = new JsonObject();
+                final JsonObjectBuilder challengeObject = Json.createObjectBuilder();
+                final JsonObjectBuilder challengeHeaders = Json.createObjectBuilder();
                 final Array32FW<HttpHeaderFW> httpHeaders = httpChallengeEx.headers();
 
                 httpHeaders.forEach(header ->
@@ -578,18 +576,18 @@ public final class SseServerFactory implements SseStreamFactory
                         {
                             final String propertyName = name.asString();
                             final String propertyValue = value.asString();
-                            challengeHeaders.addProperty(propertyName, propertyValue);
+                            challengeHeaders.add(propertyName, propertyValue);
                         }
                         else if (name.equals(HEADER_NAME_METHOD))
                         {
                             final String propertyValue = value.asString();
-                            challengeObject.addProperty(METHOD_PROPERTY, propertyValue);
+                            challengeObject.add(METHOD_PROPERTY, propertyValue);
                         }
                     }
                 });
                 challengeObject.add(HEADERS_PROPERTY, challengeHeaders);
 
-                final String challengeJson = gson.toJson(challengeObject);
+                final String challengeJson = challengeObject.build().toString();
                 final int challengeBytes = challengeBuffer.putStringWithoutLengthUtf8(0, challengeJson);
 
                 final SseEventFW sseEvent = sseEventRW.wrap(writeBuffer, DataFW.FIELD_OFFSET_PAYLOAD, writeBuffer.capacity())
