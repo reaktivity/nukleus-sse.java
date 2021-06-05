@@ -60,8 +60,8 @@
 
     <nukleus.plugin.version>0.86</nukleus.plugin.version>
 
-    <nukleus.sse.spec.version>develop-SNAPSHOT</nukleus.sse.spec.version>
-    <reaktor.version>develop-SNAPSHOT</reaktor.version>
+    <nukleus.sse.spec.version>0.58</nukleus.sse.spec.version>
+    <reaktor.version>0.166</reaktor.version>
   </properties>
 
   <dependencies>
