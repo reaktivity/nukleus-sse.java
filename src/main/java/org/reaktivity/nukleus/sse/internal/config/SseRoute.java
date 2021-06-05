@@ -13,16 +13,29 @@
  * License for the specific language governing permissions and limitations
  * under the License.
  */
-module org.reaktivity.nukleus.sse
+package org.reaktivity.nukleus.sse.internal.config;
+
+import static java.util.stream.Collectors.toList;
+
+import java.util.List;
+
+import org.reaktivity.reaktor.config.Options;
+import org.reaktivity.reaktor.config.Route;
+
+public final class SseRoute extends Options
 {
-    requires org.reaktivity.reaktor;
+    public final long id;
+    public final int order;
+    public final List<SseMatcher> when;
 
-    provides org.reaktivity.nukleus.NukleusFactorySpi
-        with org.reaktivity.nukleus.sse.internal.SseNukleusFactorySpi;
-
-    provides org.reaktivity.reaktor.config.OptionsAdapterSpi
-        with org.reaktivity.nukleus.sse.internal.config.SseOptionsAdapter;
-
-    provides org.reaktivity.reaktor.config.ConditionAdapterSpi
-        with org.reaktivity.nukleus.sse.internal.config.SseConditionAdapter;
+    public SseRoute(
+        Route route)
+    {
+        this.id = route.id;
+        this.order = route.order;
+        this.when = route.when.stream()
+            .map(SseCondition.class::cast)
+            .map(SseMatcher::new)
+            .collect(toList());
+    }
 }

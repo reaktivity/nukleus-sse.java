@@ -15,7 +15,8 @@
  */
 package org.reaktivity.nukleus.sse.internal;
 
-import org.reaktivity.nukleus.Nukleus;
+import org.reaktivity.reaktor.nukleus.ElektronContext;
+import org.reaktivity.reaktor.nukleus.Nukleus;
 
 public final class SseNukleus implements Nukleus
 {
@@ -42,8 +43,9 @@ public final class SseNukleus implements Nukleus
     }
 
     @Override
-    public SseElektron supplyElektron()
+    public SseElektron supplyElektron(
+        ElektronContext context)
     {
-        return new SseElektron(config);
+        return new SseElektron(config, context);
     }
 }

@@ -16,13 +16,12 @@
 package org.reaktivity.nukleus.sse.internal.stream;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
-import static java.util.Objects.requireNonNull;
 import static org.agrona.BitUtil.SIZE_OF_BYTE;
 import static org.agrona.LangUtil.rethrowUnchecked;
-import static org.reaktivity.nukleus.budget.BudgetDebitor.NO_DEBITOR_INDEX;
-import static org.reaktivity.nukleus.buffer.BufferPool.NO_SLOT;
 import static org.reaktivity.nukleus.sse.internal.util.Flags.FIN;
 import static org.reaktivity.nukleus.sse.internal.util.Flags.INIT;
+import static org.reaktivity.reaktor.nukleus.budget.BudgetDebitor.NO_DEBITOR_INDEX;
+import static org.reaktivity.reaktor.nukleus.buffer.BufferPool.NO_SLOT;
 
 import java.io.UnsupportedEncodingException;
 import java.net.URLDecoder;
@@ -30,7 +29,7 @@ import java.util.function.Consumer;
 import java.util.function.LongFunction;
 import java.util.function.LongSupplier;
 import java.util.function.LongUnaryOperator;
-import java.util.function.ToIntFunction;
+import java.util.function.ToLongFunction;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -38,14 +37,10 @@ import org.agrona.DirectBuffer;
 import org.agrona.MutableDirectBuffer;
 import org.agrona.collections.Long2ObjectHashMap;
 import org.agrona.concurrent.UnsafeBuffer;
-import org.reaktivity.nukleus.budget.BudgetDebitor;
-import org.reaktivity.nukleus.buffer.BufferPool;
-import org.reaktivity.nukleus.function.MessageConsumer;
-import org.reaktivity.nukleus.function.MessageFunction;
-import org.reaktivity.nukleus.function.MessagePredicate;
-import org.reaktivity.nukleus.route.RouteManager;
 import org.reaktivity.nukleus.sse.internal.SseConfiguration;
 import org.reaktivity.nukleus.sse.internal.SseNukleus;
+import org.reaktivity.nukleus.sse.internal.config.SseBinding;
+import org.reaktivity.nukleus.sse.internal.config.SseRoute;
 import org.reaktivity.nukleus.sse.internal.types.Array32FW;
 import org.reaktivity.nukleus.sse.internal.types.Flyweight;
 import org.reaktivity.nukleus.sse.internal.types.HttpHeaderFW;
@@ -53,16 +48,13 @@ import org.reaktivity.nukleus.sse.internal.types.OctetsFW;
 import org.reaktivity.nukleus.sse.internal.types.String16FW;
 import org.reaktivity.nukleus.sse.internal.types.String8FW;
 import org.reaktivity.nukleus.sse.internal.types.codec.SseEventFW;
-import org.reaktivity.nukleus.sse.internal.types.control.Capability;
-import org.reaktivity.nukleus.sse.internal.types.control.RouteFW;
-import org.reaktivity.nukleus.sse.internal.types.control.SseRouteExFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.AbortFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.BeginFW;
+import org.reaktivity.nukleus.sse.internal.types.stream.Capability;
 import org.reaktivity.nukleus.sse.internal.types.stream.ChallengeFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.DataFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.EndFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.FlushFW;
-import org.reaktivity.nukleus.sse.internal.types.stream.FrameFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.HttpBeginExFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.HttpChallengeExFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.ResetFW;
@@ -71,12 +63,17 @@ import org.reaktivity.nukleus.sse.internal.types.stream.SseDataExFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.SseEndExFW;
 import org.reaktivity.nukleus.sse.internal.types.stream.WindowFW;
 import org.reaktivity.nukleus.sse.internal.util.Flags;
-import org.reaktivity.nukleus.stream.StreamFactory;
+import org.reaktivity.reaktor.config.Binding;
+import org.reaktivity.reaktor.nukleus.ElektronContext;
+import org.reaktivity.reaktor.nukleus.budget.BudgetDebitor;
+import org.reaktivity.reaktor.nukleus.buffer.BufferPool;
+import org.reaktivity.reaktor.nukleus.function.MessageConsumer;
+import org.reaktivity.reaktor.nukleus.stream.StreamFactory;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 
-public final class SseServerFactory implements StreamFactory
+public final class SseServerFactory implements SseStreamFactory
 {
     private static final String HTTP_TYPE_NAME = "http";
 
@@ -119,10 +116,6 @@ public final class SseServerFactory implements StreamFactory
 
     private static final int CHALLENGE_CAPABILITIES_MASK = 1 << Capability.CHALLENGE.ordinal();
 
-    private final RouteFW routeRO = new RouteFW();
-    private final SseRouteExFW sseRouteExRO = new SseRouteExFW();
-
-    private final FrameFW frameRO = new FrameFW();
     private final BeginFW beginRO = new BeginFW();
     private final DataFW dataRO = new DataFW();
     private final EndFW endRO = new EndFW();
@@ -158,10 +151,10 @@ public final class SseServerFactory implements StreamFactory
 
     private final String8FW challengeEventType;
 
-    private final RouteManager router;
     private final MutableDirectBuffer writeBuffer;
     private final MutableDirectBuffer challengeBuffer;
     private final BufferPool bufferPool;
+    private final StreamFactory streamFactory;
     private final LongUnaryOperator supplyInitialId;
     private final LongUnaryOperator supplyReplyId;
     private final LongSupplier supplyTraceId;
@@ -172,38 +165,44 @@ public final class SseServerFactory implements StreamFactory
 
     private final Gson gson = new Gson();
 
-    private final Long2ObjectHashMap<SseServerReply> correlations;
-    private final MessageFunction<RouteFW> wrapRoute;
+    private final Long2ObjectHashMap<SseBinding> bindings;
     private final Consumer<Array32FW.Builder<HttpHeaderFW.Builder, HttpHeaderFW>> setHttpResponseHeaders;
     private final Consumer<Array32FW.Builder<HttpHeaderFW.Builder, HttpHeaderFW>> setHttpResponseHeadersWithTimestampExt;
 
     public SseServerFactory(
         SseConfiguration config,
-        RouteManager router,
-        MutableDirectBuffer writeBuffer,
-        BufferPool bufferPool,
-        LongUnaryOperator supplyInitialId,
-        LongUnaryOperator supplyReplyId,
-        LongSupplier supplyTraceId,
-        ToIntFunction<String> supplyTypeId,
-        LongFunction<BudgetDebitor> supplyDebitor)
+        ElektronContext context)
     {
-        this.router = requireNonNull(router);
-        this.writeBuffer = requireNonNull(writeBuffer);
+        this.writeBuffer = context.writeBuffer();
         this.challengeBuffer = new UnsafeBuffer(new byte[writeBuffer.capacity()]);
-        this.bufferPool = requireNonNull(bufferPool);
-        this.supplyInitialId = requireNonNull(supplyInitialId);
-        this.supplyReplyId = requireNonNull(supplyReplyId);
-        this.supplyTraceId = requireNonNull(supplyTraceId);
-        this.supplyDebitor = requireNonNull(supplyDebitor);
-        this.correlations = new Long2ObjectHashMap<>();
-        this.wrapRoute = this::wrapRoute;
+        this.bufferPool = context.bufferPool();
+        this.streamFactory = context.streamFactory();
+        this.supplyInitialId = context::supplyInitialId;
+        this.supplyReplyId = context::supplyReplyId;
+        this.supplyTraceId = context::supplyTraceId;
+        this.supplyDebitor = context::supplyDebitor;
+        this.bindings = new Long2ObjectHashMap<>();
         this.initialComment = config.initialComment();
-        this.httpTypeId = supplyTypeId.applyAsInt(HTTP_TYPE_NAME);
-        this.sseTypeId = supplyTypeId.applyAsInt(SseNukleus.NAME);
+        this.httpTypeId = context.supplyTypeId(HTTP_TYPE_NAME);
+        this.sseTypeId = context.supplyTypeId(SseNukleus.NAME);
         this.setHttpResponseHeaders = this::setHttpResponseHeaders;
         this.setHttpResponseHeadersWithTimestampExt = this::setHttpResponseHeadersWithTimestampExt;
         this.challengeEventType = new String8FW(config.getChallengeEventType());
+    }
+
+    @Override
+    public void attach(
+        Binding binding)
+    {
+        SseBinding sseBinding = new SseBinding(binding);
+        bindings.put(binding.id, sseBinding);
+    }
+
+    @Override
+    public void detach(
+        long bindingId)
+    {
+        bindings.remove(bindingId);
     }
 
     @Override
@@ -212,29 +211,9 @@ public final class SseServerFactory implements StreamFactory
         DirectBuffer buffer,
         int index,
         int length,
-        MessageConsumer throttle)
+        MessageConsumer network)
     {
         final BeginFW begin = beginRO.wrap(buffer, index, index + length);
-        final long streamId = begin.streamId();
-
-        MessageConsumer newStream;
-
-        if ((streamId & 0x0000_0000_0000_0001L) != 0L)
-        {
-            newStream = newInitialStream(begin, throttle);
-        }
-        else
-        {
-            newStream = newReplyStream(begin, throttle);
-        }
-
-        return newStream;
-    }
-
-    private MessageConsumer newInitialStream(
-        final BeginFW begin,
-        final MessageConsumer acceptReply)
-    {
         final long affinity = begin.affinity();
         final OctetsFW extension = begin.extension();
         final HttpBeginExFW httpBeginEx = extension.get(httpBeginExRO::tryWrap);
@@ -248,21 +227,21 @@ public final class SseServerFactory implements StreamFactory
             final long acceptReplyId = supplyReplyId.applyAsLong(acceptInitialId);
             final long newTraceId = supplyTraceId.getAsLong();
 
-            doWindow(acceptReply, acceptRouteId, acceptInitialId, 0L, 0L, 0, newTraceId, 0L, 0L, 0, 0);
-            doHttpBegin(acceptReply, acceptRouteId, acceptReplyId, 0L, 0L, 0, newTraceId, 0L, affinity,
+            doWindow(network, acceptRouteId, acceptInitialId, 0L, 0L, 0, newTraceId, 0L, 0L, 0, 0);
+            doHttpBegin(network, acceptRouteId, acceptReplyId, 0L, 0L, 0, newTraceId, 0L, affinity,
                     SseServerFactory::setCorsPreflightResponse);
-            doHttpEnd(acceptReply, acceptRouteId, acceptReplyId, 0L, 0L, 0, newTraceId, 0L);
+            doHttpEnd(network, acceptRouteId, acceptReplyId, 0L, 0L, 0, newTraceId, 0L);
 
             newStream = (t, b, i, l) -> {};
         }
         else if (!isSseRequestMethod(httpBeginEx))
         {
-            doHttpResponse(begin, acceptReply, HEADER_VALUE_STATUS_405);
+            doHttpResponse(begin, network, HEADER_VALUE_STATUS_405);
             newStream = (t, b, i, l) -> {};
         }
         else
         {
-            newStream = newInitialSseStream(begin, acceptReply, httpBeginEx);
+            newStream = newInitialSseStream(begin, network, httpBeginEx);
         }
 
         return newStream;
@@ -270,14 +249,11 @@ public final class SseServerFactory implements StreamFactory
 
     public MessageConsumer newInitialSseStream(
         final BeginFW begin,
-        final MessageConsumer acceptReply,
+        final MessageConsumer network,
         final HttpBeginExFW httpBeginEx)
     {
-        final long acceptRouteId = begin.routeId();
-        final long acceptInitialId = begin.streamId();
-        final long sequence = begin.sequence();
-        final long acknowledge = begin.acknowledge();
-        final int maximum = begin.maximum();
+        final long routeId = begin.routeId();
+        final long initialId = begin.streamId();
         final long traceId = begin.traceId();
         final long authorization = begin.authorization();
         final long affinity = begin.affinity();
@@ -320,64 +296,33 @@ public final class SseServerFactory implements StreamFactory
 
         if (lastEventId == null || lastEventId.length() <= MAXIMUM_LAST_EVENT_ID_SIZE)
         {
-            final MessagePredicate filter = (t, b, o, l) ->
+            final SseBinding binding = bindings.get(routeId);
+            final SseRoute resolved = binding != null ?  binding.resolve(authorization, pathInfo.asString()) : null;
+
+            if (resolved != null)
             {
-                final RouteFW route = routeRO.wrap(b, o, o + l);
-                final SseRouteExFW routeEx = route.extension().get(sseRouteExRO::tryWrap);
-                final String routePathInfo = routeEx != null ? routeEx.pathInfo().asString() : null;
-
-                // TODO: process pathInfo matching
-                //       && pathInfo.startsWith(routePathInfo);
-                return true;
-            };
-
-            final RouteFW route = router.resolve(acceptRouteId, authorization, filter, wrapRoute);
-            if (route != null)
-            {
-                final long connectRouteId = route.correlationId();
-                final long connectInitialId = supplyInitialId.applyAsLong(connectRouteId);
-                final long connectReplyId = supplyReplyId.applyAsLong(connectInitialId);
-                final MessageConsumer connectInitial = router.supplyReceiver(connectInitialId);
-
-                final long acceptReplyId = supplyReplyId.applyAsLong(acceptInitialId);
-
                 final boolean timestampRequested = httpBeginEx.headers().anyMatch(header ->
-                    HEADER_NAME_ACCEPT.equals(header.name()) && header.value().asString().contains("ext=timestamp"));
+                    HEADER_NAME_ACCEPT.equals(header.name()) &&
+                    header.value().asString().contains("ext=timestamp"));
 
                 final String8FW lastEventId8 = httpHelper.asLastEventId(lastEventId);
 
-                final SseServerInitial initialStream = new SseServerInitial(
-                    acceptReply,
-                    acceptRouteId,
-                    acceptInitialId,
-                    acceptReplyId,
-                    connectInitial,
-                    connectRouteId,
-                    connectInitialId);
-
-                final SseServerReply replyStream = new SseServerReply(
-                    connectInitial,
-                    connectRouteId,
-                    connectReplyId,
-                    acceptReply,
-                    acceptRouteId,
-                    acceptReplyId,
+                final SseServer server = new SseServer(
+                    network,
+                    routeId,
+                    initialId,
+                    resolved.id,
                     timestampRequested);
 
-                correlations.put(connectReplyId, replyStream);
+                server.onNetBegin(begin);
+                server.stream.doAppBegin(traceId, authorization, affinity, pathInfo, lastEventId8);
 
-                router.setThrottle(connectInitialId, initialStream::handleThrottle);
-                router.setThrottle(acceptReplyId, replyStream::handleThrottle);
-
-                doSseBegin(connectInitial, connectRouteId, connectInitialId, sequence, acknowledge, maximum,
-                        traceId, authorization, affinity, pathInfo, lastEventId8);
-
-                newStream = initialStream::handleStream;
+                newStream = server::onNetMessage;
             }
         }
         else
         {
-            doHttpResponse(begin, acceptReply, HEADER_VALUE_STATUS_400);
+            doHttpResponse(begin, network, HEADER_VALUE_STATUS_400);
 
             newStream = (t, b, i, l) -> {};
         }
@@ -385,317 +330,55 @@ public final class SseServerFactory implements StreamFactory
         return newStream;
     }
 
-
-
-    private MessageConsumer newReplyStream(
-        final BeginFW begin,
-        final MessageConsumer applicationReplyThrottle)
+    private final class SseServer
     {
-        final long connectReplyId = begin.streamId();
-
-        final SseServerReply replyStream = correlations.remove(connectReplyId);
-
-        MessageConsumer newStream = null;
-
-        if (replyStream != null)
-        {
-            newStream = replyStream::handleStream;
-        }
-
-        return newStream;
-    }
-
-    private RouteFW wrapRoute(
-        int msgTypeId,
-        DirectBuffer buffer,
-        int index,
-        int length)
-    {
-        return routeRO.wrap(buffer, index, index + length);
-    }
-
-    private final class SseServerInitial
-    {
-        private final MessageConsumer acceptReply;
-        private final long acceptRouteId;
-        private final long acceptInitialId;
-        private final long acceptReplyId;
-        private final MessageConsumer connectInitial;
-        private final long connectRouteId;
-        private final long connectInitialId;
+        private final MessageConsumer network;
+        private final long routeId;
+        private final long initialId;
+        private final long replyId;
+        private final Consumer<Array32FW.Builder<HttpHeaderFW.Builder, HttpHeaderFW>> setHttpHeaders;
+        private final SseStream stream;
 
         private long initialSeq;
         private long initialAck;
         private int initialMax;
-
-        private SseServerInitial(
-            MessageConsumer acceptReply,
-            long acceptRouteId,
-            long acceptInitialId,
-            long acceptReplyId,
-            MessageConsumer connectInitial,
-            long connectRouteId,
-            long connectInitialId)
-        {
-            this.acceptReply = acceptReply;
-            this.acceptRouteId = acceptRouteId;
-            this.acceptInitialId = acceptInitialId;
-            this.acceptReplyId = acceptReplyId;
-            this.connectInitial = connectInitial;
-            this.connectRouteId = connectRouteId;
-            this.connectInitialId = connectInitialId;
-        }
-
-        private void handleStream(
-            int msgTypeId,
-            DirectBuffer buffer,
-            int index,
-            int length)
-        {
-            switch (msgTypeId)
-            {
-            case BeginFW.TYPE_ID:
-                final BeginFW begin = beginRO.wrap(buffer, index, index + length);
-                handleBegin(begin);
-                break;
-            case EndFW.TYPE_ID:
-                final EndFW end = endRO.wrap(buffer, index, index + length);
-                handleEnd(end);
-                break;
-            case AbortFW.TYPE_ID:
-                final AbortFW abort = abortRO.wrap(buffer, index, index + length);
-                handleAbort(abort);
-                break;
-            default:
-                final FrameFW frame = frameRO.wrap(buffer, index, index + length);
-                final long sequence = frame.sequence();
-                final long acknowledge = frame.acknowledge();
-                final int maximum = frame.maximum();
-                doReset(acceptReply, acceptRouteId, acceptInitialId, sequence, acknowledge, maximum);
-                break;
-            }
-        }
-
-        private void handleBegin(
-            BeginFW begin)
-        {
-            final long sequence = begin.sequence();
-            final long acknowledge = begin.acknowledge();
-
-            assert acknowledge <= sequence;
-            assert sequence >= initialSeq;
-            assert acknowledge >= initialAck;
-
-            initialSeq = sequence;
-            initialAck = acknowledge;
-
-            assert initialAck <= initialSeq;
-        }
-
-        private void handleEnd(
-            EndFW end)
-        {
-            final long sequence = end.sequence();
-            final long acknowledge = end.acknowledge();
-            final long traceId = end.traceId();
-            final long authorization = end.authorization();
-
-            assert acknowledge <= sequence;
-            assert sequence >= initialSeq;
-
-            initialSeq = sequence;
-
-            assert initialAck <= initialSeq;
-
-            doSseEnd(connectInitial, connectRouteId, connectInitialId, initialSeq, initialAck, initialMax,
-                    traceId, authorization);
-        }
-
-        private void handleAbort(
-            AbortFW abort)
-        {
-            final long sequence = abort.sequence();
-            final long acknowledge = abort.acknowledge();
-            final long traceId = abort.traceId();
-            final long authorization = abort.authorization();
-
-            assert acknowledge <= sequence;
-            assert sequence >= initialSeq;
-
-            initialSeq = sequence;
-
-            assert initialAck <= initialSeq;
-
-            // TODO: SseAbortEx
-            doSseAbort(connectInitial, connectRouteId, connectInitialId, initialSeq, initialAck, initialMax,
-                    traceId, authorization);
-            cleanupCorrelationIfNecessary();
-        }
-
-        private void handleThrottle(
-            int msgTypeId,
-            DirectBuffer buffer,
-            int index,
-            int length)
-        {
-            switch (msgTypeId)
-            {
-            case ResetFW.TYPE_ID:
-                final ResetFW reset = resetRO.wrap(buffer, index, index + length);
-                handleReset(reset);
-                break;
-            case WindowFW.TYPE_ID:
-                final WindowFW window = windowRO.wrap(buffer, index, index + length);
-                handleWindow(window);
-                break;
-            default:
-                // ignore
-                break;
-            }
-        }
-
-        private void handleReset(
-            ResetFW reset)
-        {
-            final long sequence = reset.sequence();
-            final long acknowledge = reset.acknowledge();
-            final long traceId = reset.traceId();
-
-            assert acknowledge <= sequence;
-            assert acknowledge >= initialAck;
-
-            initialAck = acknowledge;
-
-            assert initialAck <= initialSeq;
-
-            doReset(acceptReply, acceptRouteId, acceptInitialId, initialSeq, initialAck, initialMax, traceId);
-        }
-
-        private void handleWindow(
-            WindowFW window)
-        {
-            final long sequence = window.sequence();
-            final long acknowledge = window.acknowledge();
-            final int maximum = window.maximum();
-            final long authorization = window.authorization();
-            final long traceId = window.traceId();
-            final long budgetId = window.budgetId();
-            final int padding = window.padding();
-            final int capabilities = window.capabilities() | CHALLENGE_CAPABILITIES_MASK;
-
-            assert acknowledge <= sequence;
-            assert acknowledge >= initialAck;
-            assert maximum >= initialMax;
-
-            initialAck = acknowledge;
-            initialMax = maximum;
-
-            assert initialAck <= initialSeq;
-
-            doWindow(acceptReply, acceptRouteId, acceptInitialId, initialSeq, initialAck, initialMax,
-                    traceId, authorization, budgetId, padding, capabilities);
-        }
-
-        private boolean cleanupCorrelationIfNecessary()
-        {
-            final SseServerReply correlated = correlations.remove(acceptReplyId);
-            if (correlated != null)
-            {
-                router.clearThrottle(acceptReplyId);
-            }
-
-            return correlated != null;
-        }
-    }
-
-    final class SseServerReply
-    {
-        private final MessageConsumer applicationReplyThrottle;
-        private final long applicationRouteId;
-        private final long applicationReplyId;
-
-        private final MessageConsumer networkReply;
-        private final long networkRouteId;
-        private final long networkReplyId;
-
-        private final boolean timestampRequested;
-        private final MessageConsumer afterBeginOrData;
-
-        private int networkSlot = NO_SLOT;
-        int networkSlotOffset;
-        int deferredClaim;
-        boolean deferredEnd;
-
-        private MessageConsumer streamState;
-
-        private long networkReplyBudgetId;
-        private int httpReplyPad;
-        private long networkReplyAuthorization;
-        private BudgetDebitor networkReplyDebitor;
-        private long networkReplyDebitorIndex = NO_DEBITOR_INDEX;
-
-        private boolean initialCommentPending;
-
-        private long sseReplySeq;
-        private long sseReplyAck;
-        private int sseReplyMax;
+        private int state;
 
         private long httpReplySeq;
         private long httpReplyAck;
         private int httpReplyMax;
 
-        private SseServerReply(
-            MessageConsumer applicationReplyThrottle,
-            long applicationRouteId,
-            long applicationReplyId,
-            MessageConsumer networkReply,
-            long networkRouteId,
-            long networkReplyId,
+        private int networkSlot = NO_SLOT;
+        private int networkSlotOffset;
+
+        private boolean initialCommentPending;
+        private int deferredClaim;
+        private boolean deferredEnd;
+
+        private long httpReplyBud;
+        private int httpReplyPad;
+        private long httpReplyAuth;
+        private BudgetDebitor replyDebitor;
+        private long replyDebitorIndex = NO_DEBITOR_INDEX;
+
+
+        private SseServer(
+            MessageConsumer network,
+            long routeId,
+            long initialId,
+            long resolvedId,
             boolean timestampRequested)
         {
-            this.applicationReplyThrottle = applicationReplyThrottle;
-            this.applicationRouteId = applicationRouteId;
-            this.applicationReplyId = applicationReplyId;
-            this.networkReply = networkReply;
-            this.networkRouteId = networkRouteId;
-            this.networkReplyId = networkReplyId;
-            this.timestampRequested = timestampRequested;
+            this.network = network;
+            this.routeId = routeId;
+            this.initialId = initialId;
+            this.replyId = supplyReplyId.applyAsLong(initialId);
+            this.setHttpHeaders = timestampRequested ? setHttpResponseHeadersWithTimestampExt : setHttpResponseHeaders;
             this.initialCommentPending = initialComment != null;
-            this.streamState = this::beforeBegin;
-            this.afterBeginOrData = this::afterBeginOrData;
+            this.stream = new SseStream(resolvedId, timestampRequested ? SseDataExFW::timestamp : ex -> 0L);
         }
 
-        private void handleStream(
-            int msgTypeId,
-            DirectBuffer buffer,
-            int index,
-            int length)
-        {
-            streamState.accept(msgTypeId, buffer, index, length);
-        }
-
-        private void beforeBegin(
-            int msgTypeId,
-            DirectBuffer buffer,
-            int index,
-            int length)
-        {
-            if (msgTypeId == BeginFW.TYPE_ID)
-            {
-                final BeginFW begin = beginRO.wrap(buffer, index, index + length);
-                handleBegin(begin);
-            }
-            else
-            {
-                final FrameFW frame = frameRO.wrap(buffer, index, index + length);
-                final long sequence = frame.sequence();
-                final long acknowledge = frame.acknowledge();
-                final int maximum = frame.maximum();
-                doReset(applicationReplyThrottle, applicationRouteId, applicationReplyId, sequence, acknowledge, maximum);
-            }
-        }
-
-        private void afterBeginOrData(
+        private void onNetMessage(
             int msgTypeId,
             DirectBuffer buffer,
             int index,
@@ -705,248 +388,78 @@ public final class SseServerFactory implements StreamFactory
             {
             case DataFW.TYPE_ID:
                 final DataFW data = dataRO.wrap(buffer, index, index + length);
-                handleData(data);
+                onNetData(data);
                 break;
             case EndFW.TYPE_ID:
                 final EndFW end = endRO.wrap(buffer, index, index + length);
-                handleEnd(end);
+                onNetEnd(end);
                 break;
             case AbortFW.TYPE_ID:
                 final AbortFW abort = abortRO.wrap(buffer, index, index + length);
-                handleAbort(abort);
+                onNetAbort(abort);
                 break;
-            case FlushFW.TYPE_ID:
-                final FlushFW flush = flushRO.wrap(buffer, index, index + length);
-                handleFlush(flush);
+            case ResetFW.TYPE_ID:
+                final ResetFW reset = resetRO.wrap(buffer, index, index + length);
+                onNetReset(reset);
                 break;
-            default:
-                final FrameFW frame = frameRO.wrap(buffer, index, index + length);
-                final long sequence = frame.sequence();
-                final long acknowledge = frame.acknowledge();
-                final int maximum = frame.maximum();
-                doReset(applicationReplyThrottle, applicationRouteId, applicationReplyId, sequence, acknowledge, maximum);
+            case WindowFW.TYPE_ID:
+                final WindowFW window = windowRO.wrap(buffer, index, index + length);
+                onNetWindow(window);
+                break;
+            case ChallengeFW.TYPE_ID:
+                final ChallengeFW challenge = challengeRO.wrap(buffer, index, index + length);
+                onNetChallenge(challenge);
                 break;
             }
         }
 
-        private void handleBegin(
+        private void onNetBegin(
             BeginFW begin)
         {
             final long sequence = begin.sequence();
             final long acknowledge = begin.acknowledge();
-            final int maximum = begin.maximum();
-            final long applicationReplyTraceId = begin.traceId();
-            final long applicationReplyAuthorization = begin.authorization();
-            final long applicationReplyAffinity = begin.affinity();
 
             assert acknowledge <= sequence;
-            assert sequence >= sseReplySeq;
-            assert acknowledge >= sseReplyAck;
+            assert sequence >= initialSeq;
+            assert acknowledge >= initialAck;
 
-            sseReplySeq = sequence;
-            sseReplyAck = acknowledge;
-            sseReplyMax = maximum;
+            initialSeq = sequence;
+            initialAck = acknowledge;
+            state = SseState.openingInitial(state);
 
-            assert sseReplyAck <= sseReplySeq;
-
-            if (timestampRequested)
-            {
-                doHttpBegin(
-                    networkReply,
-                    networkRouteId,
-                    networkReplyId,
-                    sseReplySeq,
-                    sseReplyAck,
-                    sseReplyMax,
-                    applicationReplyTraceId,
-                    applicationReplyAuthorization,
-                    applicationReplyAffinity,
-                    setHttpResponseHeadersWithTimestampExt);
-            }
-            else
-            {
-                doHttpBegin(
-                    networkReply,
-                    networkRouteId,
-                    networkReplyId,
-                    sseReplySeq,
-                    sseReplyAck,
-                    sseReplyMax,
-                    applicationReplyTraceId,
-                    applicationReplyAuthorization,
-                    applicationReplyAffinity,
-                    setHttpResponseHeaders);
-            }
-
-            this.streamState = afterBeginOrData;
-
-            doFlush(applicationReplyTraceId);
+            assert initialAck <= initialSeq;
         }
 
-        private void handleData(
+        private void onNetData(
             DataFW data)
         {
             final long sequence = data.sequence();
             final long acknowledge = data.acknowledge();
-            final long traceId = data.traceId();
-            final long authorization = data.authorization();
-            final long budgetId = data.budgetId();
-            final int reserved = data.reserved();
+            final int maximum = data.maximum();
 
-            assert acknowledge <= sequence;
-            assert sequence >= sseReplySeq;
-
-            sseReplySeq = sequence + reserved;
-
-            assert sseReplyAck <= sseReplySeq;
-
-            if (sseReplySeq > sseReplyAck + sseReplyMax)
-            {
-                doReset(applicationReplyThrottle, applicationRouteId, applicationReplyId, sseReplySeq, sseReplyAck, sseReplyMax);
-                doHttpAbort(networkReply, networkRouteId, networkReplyId, httpReplySeq, httpReplyAck, httpReplyMax,
-                        supplyTraceId.getAsLong(), authorization);
-            }
-            else
-            {
-                final int flags = data.flags();
-                final OctetsFW payload = data.payload();
-                final OctetsFW extension = data.extension();
-
-                DirectBuffer id = null;
-                DirectBuffer type = null;
-                long timestamp = 0L;
-                if (flags != 0x00 && extension.sizeof() > 0)
-                {
-                    final SseDataExFW sseDataEx = extension.get(sseDataExRO::wrap);
-                    id = sseDataEx.id().value();
-                    type = sseDataEx.type().value();
-
-                    if (timestampRequested)
-                    {
-                        timestamp = sseDataEx.timestamp();
-                    }
-                }
-
-                final SseEventFW sseEvent = sseEventRW.wrap(writeBuffer, DataFW.FIELD_OFFSET_PAYLOAD, writeBuffer.capacity())
-                        .flags(flags)
-                        .dataFinOnly(payload)
-                        .timestamp(timestamp)
-                        .id(id)
-                        .type(type)
-                        .dataInit(payload)
-                        .dataContOnly(payload)
-                        .build();
-
-                doHttpData(networkReply, networkRouteId, networkReplyId, httpReplySeq, httpReplyAck, httpReplyMax,
-                        traceId, authorization, budgetId, flags, reserved, sseEvent);
-
-                httpReplySeq += reserved;
-
-                assert httpReplySeq <= httpReplyAck + httpReplyMax;
-
-                initialCommentPending = false;
-            }
+            doReset(network, routeId, initialId, sequence, acknowledge, maximum);
         }
 
-        private void handleEnd(
+        private void onNetEnd(
             EndFW end)
         {
             final long sequence = end.sequence();
             final long acknowledge = end.acknowledge();
             final long traceId = end.traceId();
             final long authorization = end.authorization();
-            final OctetsFW extension = end.extension();
 
             assert acknowledge <= sequence;
-            assert sequence >= sseReplySeq;
+            assert sequence >= initialSeq;
 
-            sseReplySeq = sequence;
+            initialSeq = sequence;
+            state = SseState.closeInitial(state);
 
-            assert sseReplyAck <= sseReplySeq;
+            assert initialAck <= initialSeq;
 
-            if (extension.sizeof() > 0)
-            {
-                final SseEndExFW sseEndEx = extension.get(sseEndExRO::wrap);
-                final DirectBuffer id = sseEndEx.id().value();
-
-                int flags = FIN | INIT;
-
-                final SseEventFW sseEvent = sseEventRW.wrap(writeBuffer, DataFW.FIELD_OFFSET_PAYLOAD, writeBuffer.capacity())
-                        .flags(flags)
-                        .id(id)
-                        .build();
-
-                final DataFW data = dataRW.wrap(writeBuffer, 0, writeBuffer.capacity())
-                    .routeId(networkRouteId)
-                    .streamId(networkReplyId)
-                    .sequence(httpReplySeq)
-                    .acknowledge(httpReplyAck)
-                    .maximum(httpReplyMax)
-                    .traceId(traceId)
-                    .authorization(authorization)
-                    .flags(flags)
-                    .budgetId(networkReplyBudgetId)
-                    .reserved(sseEvent.sizeof() + httpReplyPad)
-                    .payload(sseEvent.buffer(), sseEvent.offset(), sseEvent.sizeof())
-                    .build();
-
-                if (networkSlot == NO_SLOT)
-                {
-                    networkSlot = bufferPool.acquire(networkReplyId);
-                }
-
-                if (networkSlot != NO_SLOT)
-                {
-                    MutableDirectBuffer buffer = bufferPool.buffer(networkSlot);
-                    buffer.putBytes(networkSlotOffset, data.buffer(), data.offset(), data.sizeof());
-                    networkSlotOffset += data.sizeof();
-
-                    if (networkReplyDebitorIndex != NO_DEBITOR_INDEX)
-                    {
-                        deferredClaim += data.reserved();
-                    }
-
-                    deferredEnd = true;
-                    doFlushIfNecessary(traceId);
-                }
-                else
-                {
-                    cleanupDebitorIfNecessary();
-                    doHttpAbort(networkReply, networkRouteId, networkReplyId, httpReplySeq, httpReplyAck, httpReplyMax,
-                            traceId, authorization);
-                }
-            }
-            else
-            {
-                doHttpEnd(networkReply, networkRouteId, networkReplyId, httpReplySeq, httpReplyAck, httpReplyMax,
-                        traceId, authorization);
-                cleanupDebitorIfNecessary();
-            }
+            stream.doAppEnd(traceId, authorization);
         }
 
-        private void handleFlush(
-            FlushFW flush)
-        {
-            final long sequence = flush.sequence();
-            final long acknowledge = flush.acknowledge();
-            final long traceId = flush.traceId();
-            final long authorization = flush.authorization();
-            final long budgetId = flush.budgetId();
-            final int reserved = flush.reserved();
-
-            assert acknowledge <= sequence;
-            assert sequence >= sseReplySeq;
-
-            sseReplySeq = sequence;
-
-            assert sseReplyAck <= sseReplySeq;
-
-            doFlushIfNecessary(traceId);
-            doHttpFlush(networkReply, networkRouteId, networkReplyId, httpReplySeq, httpReplyAck, httpReplyMax,
-                    traceId, authorization, budgetId, reserved);
-        }
-
-        private void handleAbort(
+        private void onNetAbort(
             AbortFW abort)
         {
             final long sequence = abort.sequence();
@@ -955,44 +468,40 @@ public final class SseServerFactory implements StreamFactory
             final long authorization = abort.authorization();
 
             assert acknowledge <= sequence;
-            assert sequence >= sseReplySeq;
+            assert sequence >= initialSeq;
 
-            sseReplySeq = sequence;
+            initialSeq = sequence;
+            state = SseState.closeInitial(state);
 
-            assert sseReplyAck <= sseReplySeq;
+            assert initialAck <= initialSeq;
 
-            doHttpAbort(networkReply, networkRouteId, networkReplyId, httpReplySeq, httpReplyAck, httpReplyMax,
-                    traceId, authorization);
+            stream.doAppAbort(traceId, authorization);
+        }
+
+        private void onNetReset(
+            ResetFW reset)
+        {
+            final long sequence = reset.sequence();
+            final long acknowledge = reset.acknowledge();
+            final int maximum = reset.maximum();
+            final long traceId = reset.traceId();
+
+            assert acknowledge <= sequence;
+            assert sequence <= httpReplySeq;
+            assert acknowledge >= httpReplyAck;
+            assert maximum >= httpReplyMax;
+
+            httpReplyAck = acknowledge;
+            httpReplyMax = maximum;
+            state = SseState.closeReply(state);
+
+            assert httpReplyAck <= httpReplySeq;
+
+            stream.doAppReset(traceId);
             cleanupDebitorIfNecessary();
         }
 
-        private void handleThrottle(
-            int msgTypeId,
-            DirectBuffer buffer,
-            int index,
-            int length)
-        {
-            switch (msgTypeId)
-            {
-            case WindowFW.TYPE_ID:
-                final WindowFW window = windowRO.wrap(buffer, index, index + length);
-                handleWindow(window);
-                break;
-            case ResetFW.TYPE_ID:
-                final ResetFW reset = resetRO.wrap(buffer, index, index + length);
-                handleReset(reset);
-                break;
-            case ChallengeFW.TYPE_ID:
-                final ChallengeFW challenge = challengeRO.wrap(buffer, index, index + length);
-                handleChallenge(challenge);
-                break;
-            default:
-                // ignore
-                break;
-            }
-        }
-
-        private void handleWindow(
+        private void onNetWindow(
             WindowFW window)
         {
             final long sequence = window.sequence();
@@ -1011,60 +520,30 @@ public final class SseServerFactory implements StreamFactory
             httpReplyAck = acknowledge;
             httpReplyMax = maximum;
             httpReplyPad = padding;
-            networkReplyBudgetId = budgetId;
-            networkReplyAuthorization = authorization;
+            httpReplyBud = budgetId;
+            httpReplyAuth = authorization;
+            state = SseState.openReply(state);
 
             assert httpReplyAck <= httpReplySeq;
 
-            if (networkReplyBudgetId != 0L && networkReplyDebitorIndex == NO_DEBITOR_INDEX)
+            if (httpReplyBud != 0L && replyDebitorIndex == NO_DEBITOR_INDEX)
             {
-                networkReplyDebitor = supplyDebitor.apply(budgetId);
-                networkReplyDebitorIndex = networkReplyDebitor.acquire(budgetId, networkReplyId, this::doFlushIfNecessary);
+                replyDebitor = supplyDebitor.apply(budgetId);
+                replyDebitorIndex = replyDebitor.acquire(budgetId, replyId, this::flushNetwork);
             }
 
-            if (networkReplyBudgetId != 0L && networkReplyDebitorIndex == NO_DEBITOR_INDEX)
+            if (httpReplyBud != 0L && replyDebitorIndex == NO_DEBITOR_INDEX)
             {
-                doHttpAbort(networkReply, networkRouteId, networkReplyId, httpReplySeq, httpReplyAck, httpReplyMax,
-                        traceId, authorization);
-                doReset(applicationReplyThrottle, applicationRouteId, applicationReplyId, sseReplySeq, sseReplyAck, httpReplyMax);
+                doNetAbort(traceId, authorization);
+                stream.doAppReset(traceId);
             }
             else
             {
-                doFlushIfNecessary(traceId);
+                flushNetwork(traceId);
             }
         }
 
-        private void handleReset(
-            ResetFW reset)
-        {
-            final long sequence = reset.sequence();
-            final long acknowledge = reset.acknowledge();
-            final int maximum = reset.maximum();
-            final long traceId = reset.traceId();
-
-            assert acknowledge <= sequence;
-            assert sequence <= httpReplySeq;
-            assert acknowledge >= httpReplyAck;
-            assert maximum >= httpReplyMax;
-
-            httpReplyAck = acknowledge;
-            httpReplyMax = maximum;
-
-            assert httpReplyAck <= httpReplySeq;
-
-            doSseResponseReset(traceId);
-            cleanupDebitorIfNecessary();
-        }
-
-        private void doSseResponseReset(
-            long traceId)
-        {
-            correlations.remove(applicationReplyId);
-            doReset(applicationReplyThrottle, applicationRouteId, applicationReplyId, sseReplySeq, sseReplyAck, sseReplyMax,
-                    traceId);
-        }
-
-        private void handleChallenge(
+        private void onNetChallenge(
             ChallengeFW challenge)
         {
             final long sequence = challenge.sequence();
@@ -1120,21 +599,21 @@ public final class SseServerFactory implements StreamFactory
                         .build();
 
                 final DataFW data = dataRW.wrap(writeBuffer, 0, writeBuffer.capacity())
-                        .routeId(networkRouteId)
-                        .streamId(networkReplyId)
+                        .routeId(routeId)
+                        .streamId(replyId)
                         .sequence(httpReplySeq)
                         .acknowledge(httpReplyAck)
                         .maximum(httpReplyMax)
                         .traceId(challenge.traceId())
                         .authorization(0)
-                        .budgetId(networkReplyBudgetId)
+                        .budgetId(httpReplyBud)
                         .reserved(sseEvent.sizeof() + httpReplyPad)
                         .payload(sseEvent.buffer(), sseEvent.offset(), sseEvent.sizeof())
                         .build();
 
                 if (networkSlot == NO_SLOT)
                 {
-                    networkSlot = bufferPool.acquire(networkReplyId);
+                    networkSlot = bufferPool.acquire(replyId);
                 }
 
                 if (networkSlot != NO_SLOT)
@@ -1143,28 +622,151 @@ public final class SseServerFactory implements StreamFactory
                     buffer.putBytes(networkSlotOffset, data.buffer(), data.offset(), data.sizeof());
                     networkSlotOffset += data.sizeof();
 
-                    if (networkReplyDebitorIndex != NO_DEBITOR_INDEX)
+                    if (replyDebitorIndex != NO_DEBITOR_INDEX)
                     {
                         deferredClaim += data.reserved();
                     }
                 }
 
-                doFlushIfNecessary(challenge.traceId());
+                flushNetwork(challenge.traceId());
             }
         }
 
-        private void doFlushIfNecessary(
+        private void doNetBegin(
+            long replySeq,
+            long replyAck,
+            int replyMax,
+            long traceId,
+            long authorization,
+            long affinity)
+        {
+            this.httpReplySeq = replySeq;
+            this.httpReplyAck = replyAck;
+            this.httpReplyMax = replyMax;
+
+            doHttpBegin(network, routeId, replyId,
+                    replySeq, replyAck, replyMax, traceId, authorization, affinity,
+                    setHttpHeaders);
+
+            encodeNetwork(traceId);
+        }
+
+        private void doNetData(
+            long traceId,
+            long authorization,
+            long budgetId,
+            int reserved,
+            int flags,
+            Flyweight payload)
+        {
+            doHttpData(network, routeId, replyId, httpReplySeq, httpReplyAck, httpReplyMax,
+                    traceId, authorization, budgetId, flags, reserved, payload);
+
+            httpReplySeq += reserved;
+
+            assert httpReplySeq <= httpReplyAck + httpReplyMax;
+        }
+
+        private void doNetFlush(
+            long traceId,
+            long authorization,
+            long budgetId,
+            int reserved)
+        {
+            doHttpFlush(network, routeId, replyId, httpReplySeq, httpReplyAck, httpReplyMax,
+                    traceId, authorization, budgetId, reserved);
+        }
+
+        private void doNetAbort(
+            long traceId,
+            long authorization)
+        {
+            if (!SseState.replyClosed(state))
+            {
+                state = SseState.closeReply(state);
+
+                doHttpAbort(network, routeId, replyId, httpReplySeq, httpReplyAck, httpReplyMax,
+                        traceId, authorization);
+
+                cleanupDebitorIfNecessary();
+            }
+        }
+
+        private void doNetEnd(
+            long traceId,
+            long authorization)
+        {
+            if (!SseState.replyClosed(state))
+            {
+                state = SseState.closeReply(state);
+
+                doHttpEnd(network, routeId, replyId, httpReplySeq, httpReplyAck, httpReplyMax,
+                        traceId, authorization);
+
+                cleanupDebitorIfNecessary();
+            }
+        }
+
+        private void doNetWindow(
+            long authorization,
+            long traceId,
+            long budgetId,
+            int padding,
+            int capabilities)
+        {
+            doWindow(network, routeId, initialId, initialSeq, initialAck, initialMax,
+                    traceId, authorization, budgetId, padding, capabilities);
+        }
+
+        private void doNetReset(
             long traceId)
         {
-            if (streamState == afterBeginOrData)
+            if (!SseState.initialClosed(state))
             {
-                doFlush(traceId);
-            }
+                state = SseState.closeInitial(state);
 
-            doWindowIfNecessary(traceId);
+                doReset(network, routeId, initialId, initialSeq, initialAck, initialMax, traceId);
+            }
         }
 
-        private void doFlush(
+        private void doEncodeEvent(
+            long traceId,
+            long authorization,
+            long budgetId,
+            int reserved,
+            int flags,
+            OctetsFW payload,
+            DirectBuffer id,
+            DirectBuffer type,
+            long timestamp)
+        {
+            final SseEventFW sseEvent = sseEventRW.wrap(writeBuffer, DataFW.FIELD_OFFSET_PAYLOAD, writeBuffer.capacity())
+                    .flags(flags)
+                    .dataFinOnly(payload)
+                    .timestamp(timestamp)
+                    .id(id)
+                    .type(type)
+                    .dataInit(payload)
+                    .dataContOnly(payload)
+                    .build();
+
+            doNetData(traceId, authorization, budgetId, reserved, flags, sseEvent);
+
+            initialCommentPending = false;
+        }
+
+        private void flushNetwork(
+            long traceId)
+        {
+            if (SseState.replyOpening(state))
+            {
+                encodeNetwork(traceId);
+            }
+
+            stream.flushAppWindow(traceId);
+        }
+
+        private void encodeNetwork(
             long traceId)
         {
             comment:
@@ -1187,16 +789,16 @@ public final class SseServerFactory implements StreamFactory
                 }
 
                 int claimed = reserved;
-                if (networkReplyDebitorIndex != NO_DEBITOR_INDEX)
+                if (replyDebitorIndex != NO_DEBITOR_INDEX)
                 {
-                    claimed = networkReplyDebitor.claim(traceId, networkReplyDebitorIndex, networkReplyId,
+                    claimed = replyDebitor.claim(traceId, replyDebitorIndex, replyId,
                         reserved, reserved, 0);
                 }
 
                 if (claimed == reserved)
                 {
-                    doHttpData(networkReply, networkRouteId, networkReplyId, httpReplySeq, httpReplyAck, httpReplyMax,
-                            traceId, networkReplyAuthorization, networkReplyBudgetId, flags, reserved, sseEvent);
+                    doHttpData(network, routeId, replyId, httpReplySeq, httpReplyAck, httpReplyMax,
+                            traceId, httpReplyAuth, httpReplyBud, flags, reserved, sseEvent);
 
                     httpReplySeq += reserved;
 
@@ -1208,9 +810,9 @@ public final class SseServerFactory implements StreamFactory
 
             if (deferredClaim > 0)
             {
-                assert networkReplyDebitorIndex != NO_DEBITOR_INDEX;
+                assert replyDebitorIndex != NO_DEBITOR_INDEX;
 
-                int claimed = networkReplyDebitor.claim(traceId, networkReplyDebitorIndex, networkReplyId,
+                int claimed = replyDebitor.claim(traceId, replyDebitorIndex, replyId,
                     deferredClaim, deferredClaim, 0);
 
                 if (claimed == deferredClaim)
@@ -1225,12 +827,12 @@ public final class SseServerFactory implements StreamFactory
                 {
                     final MutableDirectBuffer buffer = bufferPool.buffer(networkSlot);
                     final DataFW data = dataRO.wrap(buffer,  0,  networkSlotOffset);
-                    final int networkSlotReserved = data.reserved();
+                    final int reserved = data.reserved();
 
-                    if (httpReplySeq + networkSlotReserved <= httpReplyAck + httpReplyMax)
+                    if (httpReplySeq + reserved <= httpReplyAck + httpReplyMax)
                     {
-                        networkReply.accept(data.typeId(), data.buffer(), data.offset(), data.sizeof());
-                        httpReplySeq += networkSlotReserved;
+                        network.accept(data.typeId(), data.buffer(), data.offset(), data.sizeof());
+                        httpReplySeq += reserved;
                         networkSlotOffset -= data.sizeof();
                         assert networkSlotOffset == 0;
                         bufferPool.release(networkSlot);
@@ -1238,7 +840,7 @@ public final class SseServerFactory implements StreamFactory
 
                         if (deferredEnd)
                         {
-                            doHttpEnd(networkReply, networkRouteId, networkReplyId, httpReplySeq, httpReplyAck, httpReplyMax,
+                            doHttpEnd(network, routeId, replyId, httpReplySeq, httpReplyAck, httpReplyMax,
                                     data.traceId(), data.authorization());
                             cleanupDebitorIfNecessary();
                             deferredEnd = false;
@@ -1248,37 +850,365 @@ public final class SseServerFactory implements StreamFactory
             }
         }
 
-        private void doWindowIfNecessary(
-            long traceId)
+        private void cleanupDebitorIfNecessary()
         {
-            int httpReplyPendingAck = (int)(httpReplySeq - httpReplyAck) + networkSlotOffset;
-            if (initialCommentPending)
+            if (replyDebitorIndex != NO_DEBITOR_INDEX)
             {
-                assert initialComment != null;
-                httpReplyPendingAck += initialComment.capacity() + 3 + httpReplyPad;
-            }
-
-            int sseReplyPad = httpReplyPad + MAXIMUM_HEADER_SIZE;
-            int sseReplyAckMax = (int)(sseReplySeq - httpReplyPendingAck);
-            if (sseReplyAckMax > sseReplyAck || httpReplyMax > sseReplyMax)
-            {
-                sseReplyAck = sseReplyAckMax;
-                assert sseReplyAck <= sseReplySeq;
-
-                sseReplyMax = httpReplyMax;
-
-                doWindow(applicationReplyThrottle, applicationRouteId, applicationReplyId, sseReplySeq, sseReplyAck, sseReplyMax,
-                        traceId, networkReplyAuthorization, networkReplyBudgetId, sseReplyPad, 0);
+                replyDebitor.release(replyDebitorIndex, replyId);
+                replyDebitor = null;
+                replyDebitorIndex = NO_DEBITOR_INDEX;
             }
         }
 
-        private void cleanupDebitorIfNecessary()
+        final class SseStream
         {
-            if (networkReplyDebitorIndex != NO_DEBITOR_INDEX)
+            private MessageConsumer application;
+            private final long routeId;
+            private final long initialId;
+            private final long replyId;
+            private final ToLongFunction<SseDataExFW> supplyTimestamp;
+
+            private int state;
+
+            private long sseReplySeq;
+            private long sseReplyAck;
+            private int sseReplyMax;
+
+            private SseStream(
+                long routeId,
+                ToLongFunction<SseDataExFW> supplyTimestamp)
             {
-                networkReplyDebitor.release(networkReplyDebitorIndex, networkReplyId);
-                networkReplyDebitor = null;
-                networkReplyDebitorIndex = NO_DEBITOR_INDEX;
+                this.routeId = routeId;
+                this.initialId = supplyInitialId.applyAsLong(routeId);
+                this.replyId = supplyReplyId.applyAsLong(initialId);
+                this.supplyTimestamp = supplyTimestamp;
+            }
+
+            private void doAppBegin(
+                long traceId,
+                long authorization,
+                long affinity,
+                String16FW pathInfo,
+                String8FW lastEventId)
+            {
+                application = newSseStream(this::onAppMessage, routeId, initialId, initialSeq, initialAck, initialMax,
+                        traceId, authorization, affinity, pathInfo, lastEventId);
+            }
+
+            private void doAppEnd(
+                long traceId,
+                long authorization)
+            {
+                if (!SseState.initialClosed(state))
+                {
+                    state = SseState.closeInitial(state);
+
+                    doEnd(application, routeId, initialId, initialSeq, initialAck, initialMax,
+                            traceId, authorization);
+                }
+            }
+
+            private void doAppAbort(
+                long traceId,
+                long authorization)
+            {
+                if (!SseState.initialClosed(state))
+                {
+                    state = SseState.closeInitial(state);
+
+                    doAbort(application, routeId, initialId, initialSeq, initialAck, initialMax,
+                            traceId, authorization);
+                }
+            }
+
+            private void onAppMessage(
+                int msgTypeId,
+                DirectBuffer buffer,
+                int index,
+                int length)
+            {
+                switch (msgTypeId)
+                {
+                case BeginFW.TYPE_ID:
+                    final BeginFW begin = beginRO.wrap(buffer, index, index + length);
+                    onAppBegin(begin);
+                    break;
+                case DataFW.TYPE_ID:
+                    final DataFW data = dataRO.wrap(buffer, index, index + length);
+                    onAppData(data);
+                    break;
+                case EndFW.TYPE_ID:
+                    final EndFW end = endRO.wrap(buffer, index, index + length);
+                    onAppEnd(end);
+                    break;
+                case AbortFW.TYPE_ID:
+                    final AbortFW abort = abortRO.wrap(buffer, index, index + length);
+                    onAppAbort(abort);
+                    break;
+                case FlushFW.TYPE_ID:
+                    final FlushFW flush = flushRO.wrap(buffer, index, index + length);
+                    onAppFlush(flush);
+                    break;
+                case WindowFW.TYPE_ID:
+                    final WindowFW window = windowRO.wrap(buffer, index, index + length);
+                    onAppWindow(window);
+                    break;
+                case ResetFW.TYPE_ID:
+                    final ResetFW reset = resetRO.wrap(buffer, index, index + length);
+                    onAppReset(reset);
+                    break;
+                }
+            }
+
+            private void onAppBegin(
+                BeginFW begin)
+            {
+                final long sequence = begin.sequence();
+                final long acknowledge = begin.acknowledge();
+                final int maximum = begin.maximum();
+                final long traceId = begin.traceId();
+                final long authorization = begin.authorization();
+                final long affinity = begin.affinity();
+
+                assert acknowledge <= sequence;
+                assert sequence >= sseReplySeq;
+                assert acknowledge >= sseReplyAck;
+
+                sseReplySeq = sequence;
+                sseReplyAck = acknowledge;
+                sseReplyMax = maximum;
+                state = SseState.openingReply(state);
+
+                assert sseReplyAck <= sseReplySeq;
+
+                doNetBegin(sseReplySeq, sseReplyAck, sseReplyMax,
+                        traceId, authorization, affinity);
+            }
+
+            private void onAppData(
+                DataFW data)
+            {
+                final long sequence = data.sequence();
+                final long acknowledge = data.acknowledge();
+                final long traceId = data.traceId();
+                final long authorization = data.authorization();
+                final long budgetId = data.budgetId();
+                final int reserved = data.reserved();
+
+                assert acknowledge <= sequence;
+                assert sequence >= sseReplySeq;
+
+                sseReplySeq = sequence + reserved;
+
+                assert sseReplyAck <= sseReplySeq;
+
+                if (sseReplySeq > sseReplyAck + sseReplyMax)
+                {
+                    doAppReset(traceId);
+                    doNetAbort(traceId, authorization);
+                }
+                else
+                {
+                    final int flags = data.flags();
+                    final OctetsFW payload = data.payload();
+                    final OctetsFW extension = data.extension();
+
+                    DirectBuffer id = null;
+                    DirectBuffer type = null;
+                    long timestamp = 0L;
+                    if (flags != 0x00 && extension.sizeof() > 0)
+                    {
+                        final SseDataExFW sseDataEx = extension.get(sseDataExRO::wrap);
+                        id = sseDataEx.id().value();
+                        type = sseDataEx.type().value();
+                        timestamp = supplyTimestamp.applyAsLong(sseDataEx);
+                    }
+
+                    doEncodeEvent(traceId, authorization, budgetId, reserved, flags, payload, id, type, timestamp);
+                }
+            }
+
+            private void onAppEnd(
+                EndFW end)
+            {
+                final long sequence = end.sequence();
+                final long acknowledge = end.acknowledge();
+                final long traceId = end.traceId();
+                final long authorization = end.authorization();
+                final OctetsFW extension = end.extension();
+
+                assert acknowledge <= sequence;
+                assert sequence >= sseReplySeq;
+
+                sseReplySeq = sequence;
+
+                assert sseReplyAck <= sseReplySeq;
+
+                if (extension.sizeof() > 0)
+                {
+                    final SseEndExFW sseEndEx = extension.get(sseEndExRO::wrap);
+                    final DirectBuffer id = sseEndEx.id().value();
+
+                    int flags = FIN | INIT;
+
+                    final SseEventFW sseEvent = sseEventRW.wrap(writeBuffer, DataFW.FIELD_OFFSET_PAYLOAD, writeBuffer.capacity())
+                            .flags(flags)
+                            .id(id)
+                            .build();
+
+                    final DataFW data = dataRW.wrap(writeBuffer, 0, writeBuffer.capacity())
+                        .routeId(SseServer.this.routeId)
+                        .streamId(SseServer.this.replyId)
+                        .sequence(httpReplySeq)
+                        .acknowledge(httpReplyAck)
+                        .maximum(httpReplyMax)
+                        .traceId(traceId)
+                        .authorization(authorization)
+                        .flags(flags)
+                        .budgetId(httpReplyBud)
+                        .reserved(sseEvent.sizeof() + httpReplyPad)
+                        .payload(sseEvent.buffer(), sseEvent.offset(), sseEvent.sizeof())
+                        .build();
+
+                    if (networkSlot == NO_SLOT)
+                    {
+                        networkSlot = bufferPool.acquire(SseServer.this.replyId);
+                    }
+
+                    if (networkSlot != NO_SLOT)
+                    {
+                        MutableDirectBuffer buffer = bufferPool.buffer(networkSlot);
+                        buffer.putBytes(networkSlotOffset, data.buffer(), data.offset(), data.sizeof());
+                        networkSlotOffset += data.sizeof();
+
+                        if (replyDebitorIndex != NO_DEBITOR_INDEX)
+                        {
+                            deferredClaim += data.reserved();
+                        }
+
+                        deferredEnd = true;
+                        flushNetwork(traceId);
+                    }
+                    else
+                    {
+                        doNetAbort(traceId, authorization);
+                    }
+                }
+                else
+                {
+                    doNetEnd(traceId, authorization);
+                }
+            }
+
+            private void onAppFlush(
+                FlushFW flush)
+            {
+                final long sequence = flush.sequence();
+                final long acknowledge = flush.acknowledge();
+                final long traceId = flush.traceId();
+                final long authorization = flush.authorization();
+                final long budgetId = flush.budgetId();
+                final int reserved = flush.reserved();
+
+                assert acknowledge <= sequence;
+                assert sequence >= sseReplySeq;
+
+                sseReplySeq = sequence;
+
+                assert sseReplyAck <= sseReplySeq;
+
+                flushNetwork(traceId);
+                doNetFlush(traceId, authorization, budgetId, reserved);
+            }
+
+            private void onAppAbort(
+                AbortFW abort)
+            {
+                final long sequence = abort.sequence();
+                final long acknowledge = abort.acknowledge();
+                final long traceId = abort.traceId();
+                final long authorization = abort.authorization();
+
+                assert acknowledge <= sequence;
+                assert sequence >= sseReplySeq;
+
+                sseReplySeq = sequence;
+
+                assert sseReplyAck <= sseReplySeq;
+
+                doNetAbort(traceId, authorization);
+            }
+
+            private void onAppWindow(
+                WindowFW window)
+            {
+                final long sequence = window.sequence();
+                final long acknowledge = window.acknowledge();
+                final int maximum = window.maximum();
+                final long authorization = window.authorization();
+                final long traceId = window.traceId();
+                final long budgetId = window.budgetId();
+                final int padding = window.padding();
+                final int capabilities = window.capabilities() | CHALLENGE_CAPABILITIES_MASK;
+
+                assert acknowledge <= sequence;
+                assert acknowledge >= initialAck;
+                assert maximum >= initialMax;
+
+                initialAck = acknowledge;
+                initialMax = maximum;
+
+                assert initialAck <= initialSeq;
+
+                doNetWindow(authorization, traceId, budgetId, padding, capabilities);
+            }
+
+            private void onAppReset(
+                ResetFW reset)
+            {
+                final long sequence = reset.sequence();
+                final long acknowledge = reset.acknowledge();
+                final long traceId = reset.traceId();
+
+                assert acknowledge <= sequence;
+                assert acknowledge >= initialAck;
+
+                initialAck = acknowledge;
+
+                assert initialAck <= initialSeq;
+
+                doNetReset(traceId);
+            }
+
+            private void doAppReset(
+                long traceId)
+            {
+                doReset(application, routeId, replyId, sseReplySeq, sseReplyAck, sseReplyMax,
+                        traceId);
+            }
+
+            private void flushAppWindow(
+                long traceId)
+            {
+                int httpReplyPendingAck = (int)(httpReplySeq - httpReplyAck) + networkSlotOffset;
+                if (initialCommentPending)
+                {
+                    assert initialComment != null;
+                    httpReplyPendingAck += initialComment.capacity() + 3 + httpReplyPad;
+                }
+
+                int sseReplyPad = httpReplyPad + MAXIMUM_HEADER_SIZE;
+                int sseReplyAckMax = (int)(sseReplySeq - httpReplyPendingAck);
+                if (sseReplyAckMax > sseReplyAck || httpReplyMax > sseReplyMax)
+                {
+                    sseReplyAck = sseReplyAckMax;
+                    assert sseReplyAck <= sseReplySeq;
+
+                    sseReplyMax = httpReplyMax;
+
+                    doWindow(application, routeId, replyId, sseReplySeq, sseReplyAck, sseReplyMax,
+                            traceId, httpReplyAuth, httpReplyBud, sseReplyPad, 0);
+                }
             }
         }
     }
@@ -1498,8 +1428,8 @@ public final class SseServerFactory implements StreamFactory
         doHttpEnd(acceptReply, acceptRouteId, acceptReplyId, 0L, 0L, 0, traceId, 0L);
     }
 
-    private void doSseBegin(
-        MessageConsumer receiver,
+    private MessageConsumer newSseStream(
+        MessageConsumer sender,
         long routeId,
         long streamId,
         long sequence,
@@ -1529,10 +1459,15 @@ public final class SseServerFactory implements StreamFactory
                 .extension(sseBegin.buffer(), sseBegin.offset(), sseBegin.sizeof())
                 .build();
 
+        MessageConsumer receiver =
+                streamFactory.newStream(begin.typeId(), begin.buffer(), begin.offset(), begin.sizeof(), sender);
+
         receiver.accept(begin.typeId(), begin.buffer(), begin.offset(), begin.sizeof());
+
+        return receiver;
     }
 
-    private void doSseAbort(
+    private void doAbort(
         MessageConsumer receiver,
         long routeId,
         long streamId,
@@ -1556,7 +1491,7 @@ public final class SseServerFactory implements StreamFactory
         receiver.accept(abort.typeId(), abort.buffer(), abort.offset(), abort.sizeof());
     }
 
-    private void doSseEnd(
+    private void doEnd(
         MessageConsumer receiver,
         long routeId,
         long streamId,

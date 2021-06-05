@@ -16,35 +16,58 @@
 package org.reaktivity.nukleus.sse.internal;
 
 import static java.util.Collections.singletonMap;
-import static org.reaktivity.nukleus.route.RouteKind.SERVER;
+import static org.reaktivity.reaktor.config.Role.SERVER;
 
 import java.util.Map;
 
-import org.reaktivity.nukleus.Elektron;
-import org.reaktivity.nukleus.route.RouteKind;
-import org.reaktivity.nukleus.sse.internal.stream.SseServerFactoryBuilder;
-import org.reaktivity.nukleus.stream.StreamFactoryBuilder;
+import org.reaktivity.nukleus.sse.internal.stream.SseServerFactory;
+import org.reaktivity.nukleus.sse.internal.stream.SseStreamFactory;
+import org.reaktivity.reaktor.config.Binding;
+import org.reaktivity.reaktor.config.Role;
+import org.reaktivity.reaktor.nukleus.Elektron;
+import org.reaktivity.reaktor.nukleus.ElektronContext;
+import org.reaktivity.reaktor.nukleus.stream.StreamFactory;
 
 final class SseElektron implements Elektron
 {
-    private final Map<RouteKind, StreamFactoryBuilder> streamFactoryBuilders;
+    private final Map<Role, SseStreamFactory> factories;
 
     SseElektron(
-        SseConfiguration config)
+        SseConfiguration config,
+        ElektronContext context)
     {
-        this.streamFactoryBuilders = singletonMap(SERVER, new SseServerFactoryBuilder(config));
+        this.factories = singletonMap(SERVER, new SseServerFactory(config, context));
     }
 
     @Override
-    public StreamFactoryBuilder streamFactoryBuilder(
-        RouteKind kind)
+    public StreamFactory attach(
+        Binding binding)
     {
-        return streamFactoryBuilders.get(kind);
+        final SseStreamFactory factory = factories.get(binding.kind);
+
+        if (factory != null)
+        {
+            factory.attach(binding);
+        }
+
+        return factory;
+    }
+
+    @Override
+    public void detach(
+        Binding binding)
+    {
+        final SseStreamFactory factory = factories.get(binding.kind);
+
+        if (factory != null)
+        {
+            factory.detach(binding.id);
+        }
     }
 
     @Override
     public String toString()
     {
-        return String.format("%s %s", getClass().getSimpleName(), streamFactoryBuilders);
+        return String.format("%s %s", getClass().getSimpleName(), factories);
     }
 }

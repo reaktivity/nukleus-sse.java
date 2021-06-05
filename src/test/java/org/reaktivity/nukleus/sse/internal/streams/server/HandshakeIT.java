@@ -18,7 +18,6 @@ package org.reaktivity.nukleus.sse.internal.streams.server;
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.junit.rules.RuleChain.outerRule;
 import static org.reaktivity.nukleus.sse.internal.SseConfigurationTest.SSE_INITIAL_COMMENT_ENABLED_NAME;
-import static org.reaktivity.reaktor.test.ReaktorRule.EXTERNAL_AFFINITY_MASK;
 
 import org.junit.Rule;
 import org.junit.Test;
@@ -28,14 +27,14 @@ import org.junit.rules.Timeout;
 import org.kaazing.k3po.junit.annotation.Specification;
 import org.kaazing.k3po.junit.rules.K3poRule;
 import org.reaktivity.reaktor.test.ReaktorRule;
+import org.reaktivity.reaktor.test.annotation.Configuration;
 import org.reaktivity.reaktor.test.annotation.Configure;
 
 public class HandshakeIT
 {
     private final K3poRule k3po = new K3poRule()
-            .addScriptRoot("route", "org/reaktivity/specification/nukleus/sse/control/route")
-            .addScriptRoot("client", "org/reaktivity/specification/sse/handshake")
-            .addScriptRoot("server", "org/reaktivity/specification/nukleus/sse/streams/handshake");
+        .addScriptRoot("net", "org/reaktivity/specification/nukleus/sse/streams/network/handshake")
+        .addScriptRoot("app", "org/reaktivity/specification/nukleus/sse/streams/application/handshake");
 
     private final TestRule timeout = new DisableOnDebug(new Timeout(10, SECONDS));
 
@@ -44,124 +43,124 @@ public class HandshakeIT
         .commandBufferCapacity(1024)
         .responseBufferCapacity(1024)
         .counterValuesBufferCapacity(4096)
-        .nukleus("sse"::equals)
-        .affinityMask("target#0", EXTERNAL_AFFINITY_MASK)
+        .configurationRoot("org/reaktivity/specification/nukleus/sse/config")
+        .external("app#0")
         .clean();
 
     @Rule
     public final TestRule chain = outerRule(reaktor).around(k3po).around(timeout);
 
     @Test
+    @Configuration("server.when.json")
     @Specification({
-            "${route}/server/controller",
-            "${client}/connection.succeeded/request",
-            "${server}/connection.succeeded/response" })
+        "${net}/connection.succeeded/request",
+        "${app}/connection.succeeded/response" })
     public void shouldHandshake() throws Exception
     {
         k3po.finish();
     }
 
     @Test
+    @Configuration("server.when.json")
     @Specification({
-        "${route}/server/controller",
-        "${client}/cors.preflight/request" })
+        "${net}/cors.preflight/request" })
     public void shouldHandshakeWithCorsPreflight() throws Exception
     {
         k3po.finish();
     }
 
     @Test
+    @Configuration("server.when.json")
     @Specification({
-        "${route}/server/controller",
-        "${client}/request.method.unsupported/request" })
+        "${net}/request.method.unsupported/request" })
     public void shouldFailHandshakeWhenRequestMethodUnsupported() throws Exception
     {
         k3po.finish();
     }
 
-    @Test
     @Configure(name = SSE_INITIAL_COMMENT_ENABLED_NAME, value = "true")
+    @Test
+    @Configuration("server.when.json")
     @Specification({
-            "${route}/server/controller",
-            "${client}/initial.comment/request",
-            "${server}/last.event.id/response" })
+        "${net}/initial.comment/request",
+        "${app}/last.event.id/response" })
     public void shouldSendInitialComment() throws Exception
     {
         k3po.finish();
     }
 
     @Test
+    @Configuration("server.when.json")
     @Specification({
-        "${route}/server/controller",
-        "${client}/request.header.last.event.id/request",
-        "${server}/last.event.id/response" })
+        "${net}/request.header.last.event.id/request",
+        "${app}/last.event.id/response" })
     public void shouldHandshakeWithRequestHeaderLastEventId() throws Exception
     {
         k3po.finish();
     }
 
     @Test
+    @Configuration("server.when.json")
     @Specification({
-        "${route}/server/controller",
-        "${client}/request.header.last.event.id.empty/request",
-        "${server}/last.event.id.empty/response" })
+        "${net}/request.header.last.event.id.empty/request",
+        "${app}/last.event.id.empty/response" })
     public void shouldHandshakeWithRequestHeaderLastEventIdEmpty() throws Exception
     {
         k3po.finish();
     }
 
     @Test
+    @Configuration("server.when.json")
     @Specification({
-        "${route}/server/controller",
-        "${client}/request.header.last.event.id.overflow/request" })
+        "${net}/request.header.last.event.id.overflow/request" })
     public void shouldFailHandshakeWithRequestHeaderLastEventIdOverflow() throws Exception
     {
         k3po.finish();
     }
 
     @Test
+    @Configuration("server.when.json")
     @Specification({
-        "${route}/server/controller",
-        "${client}/request.header.last.event.id.overflow.multibyte/request" })
+        "${net}/request.header.last.event.id.overflow.multibyte/request" })
     public void shouldFailHandshakeWithRequestHeaderLastEventIdOverflowMultibyte() throws Exception
     {
         k3po.finish();
     }
 
     @Test
+    @Configuration("server.when.json")
     @Specification({
-        "${route}/server/controller",
-        "${client}/request.parameter.last.event.id.empty/request",
-        "${server}/last.event.id.empty/response" })
+        "${net}/request.parameter.last.event.id.empty/request",
+        "${app}/last.event.id.empty/response" })
     public void shouldHandshakeWithRequestParameterLastEventIdEmpty() throws Exception
     {
         k3po.finish();
     }
 
     @Test
+    @Configuration("server.when.json")
     @Specification({
-        "${route}/server/controller",
-        "${client}/request.parameter.last.event.id/request",
-        "${server}/last.event.id/response" })
+        "${net}/request.parameter.last.event.id/request",
+        "${app}/last.event.id/response" })
     public void shouldHandshakeWithRequestParameterLastEventId() throws Exception
     {
         k3po.finish();
     }
 
     @Test
+    @Configuration("server.when.json")
     @Specification({
-        "${route}/server/controller",
-        "${client}/request.parameter.last.event.id.overflow/request" })
+        "${net}/request.parameter.last.event.id.overflow/request" })
     public void shouldFailHandshakeWithRequestParameterLastEventIdOverflow() throws Exception
     {
         k3po.finish();
     }
 
     @Test
+    @Configuration("server.when.json")
     @Specification({
-        "${route}/server/controller",
-        "${client}/request.parameter.last.event.id.url.encoded/request",
-        "${server}/last.event.id/response" })
+        "${net}/request.parameter.last.event.id.url.encoded/request",
+        "${app}/last.event.id/response" })
     public void shouldHandshakeWithURLEncodedRequestParameterLastEventId() throws Exception
     {
         k3po.finish();

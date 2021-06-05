@@ -17,7 +17,7 @@ package org.reaktivity.nukleus.sse.internal;
 
 import org.agrona.DirectBuffer;
 import org.agrona.concurrent.UnsafeBuffer;
-import org.reaktivity.nukleus.Configuration;
+import org.reaktivity.reaktor.nukleus.Configuration;
 
 public class SseConfiguration extends Configuration
 {
