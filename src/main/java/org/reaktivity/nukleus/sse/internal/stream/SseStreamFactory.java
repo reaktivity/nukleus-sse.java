@@ -13,14 +13,16 @@
  * License for the specific language governing permissions and limitations
  * under the License.
  */
-module org.reaktivity.nukleus.sse
+package org.reaktivity.nukleus.sse.internal.stream;
+
+import org.reaktivity.reaktor.config.Binding;
+import org.reaktivity.reaktor.nukleus.stream.StreamFactory;
+
+public interface SseStreamFactory extends StreamFactory
 {
-    requires org.reaktivity.nukleus;
-    requires com.google.gson;
+    void attach(
+        Binding binding);
 
-    provides org.reaktivity.nukleus.NukleusFactorySpi
-        with org.reaktivity.nukleus.sse.internal.SseNukleusFactorySpi;
-
-    provides org.reaktivity.nukleus.ControllerFactorySpi
-        with org.reaktivity.nukleus.sse.internal.SseControllerFactorySpi;
+    void detach(
+        long bindingId);
 }

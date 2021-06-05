@@ -17,7 +17,6 @@ package org.reaktivity.nukleus.sse.internal.streams.server;
 
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.junit.rules.RuleChain.outerRule;
-import static org.reaktivity.reaktor.test.ReaktorRule.EXTERNAL_AFFINITY_MASK;
 
 import org.junit.Rule;
 import org.junit.Test;
@@ -27,33 +26,33 @@ import org.junit.rules.Timeout;
 import org.kaazing.k3po.junit.annotation.Specification;
 import org.kaazing.k3po.junit.rules.K3poRule;
 import org.reaktivity.reaktor.test.ReaktorRule;
+import org.reaktivity.reaktor.test.annotation.Configuration;
 
 public class AdvisoryIT
 {
     private final K3poRule k3po = new K3poRule()
-            .addScriptRoot("route", "org/reaktivity/specification/nukleus/sse/control/route")
-            .addScriptRoot("client", "org/reaktivity/specification/sse/advise")
-            .addScriptRoot("server", "org/reaktivity/specification/nukleus/sse/streams/advise");;
+        .addScriptRoot("net", "org/reaktivity/specification/nukleus/sse/streams/network/advise")
+        .addScriptRoot("app", "org/reaktivity/specification/nukleus/sse/streams/application/advise");
 
     private final TestRule timeout = new DisableOnDebug(new Timeout(10, SECONDS));
 
     private final ReaktorRule reaktor = new ReaktorRule()
-            .directory("target/nukleus-itests")
-            .commandBufferCapacity(2048)
-            .responseBufferCapacity(2048)
-            .counterValuesBufferCapacity(8192)
-            .nukleus("sse"::equals)
-            .affinityMask("target#0", EXTERNAL_AFFINITY_MASK)
-            .clean();
+        .directory("target/nukleus-itests")
+        .commandBufferCapacity(2048)
+        .responseBufferCapacity(2048)
+        .counterValuesBufferCapacity(8192)
+        .configurationRoot("org/reaktivity/specification/nukleus/sse/config")
+        .external("app#0")
+        .clean();
 
     @Rule
     public final TestRule chain = outerRule(reaktor).around(k3po).around(timeout);
 
     @Test
+    @Configuration("server.when.json")
     @Specification({
-        "${route}/server/controller",
-        "${client}/flush/request",
-        "${server}/flush/response" })
+        "${net}/flush/request",
+        "${app}/flush/response" })
     public void shouldFlushResponse() throws Exception
     {
         k3po.finish();

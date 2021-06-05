@@ -13,32 +13,36 @@
  * License for the specific language governing permissions and limitations
  * under the License.
  */
-package org.reaktivity.nukleus.sse.internal;
+package org.reaktivity.nukleus.sse.internal.config;
 
-import org.reaktivity.nukleus.Configuration;
-import org.reaktivity.nukleus.ControllerBuilder;
-import org.reaktivity.nukleus.ControllerFactorySpi;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
-public final class SseControllerFactorySpi implements ControllerFactorySpi<SseController>
+public final class SseMatcher
 {
-    @Override
-    public String name()
+    private final Matcher path;
+
+    public SseMatcher(
+        SseCondition condition)
     {
-        return "sse";
+        this.path = condition.path != null ? asMatcher(condition.path) : null;
     }
 
-    @Override
-    public Class<SseController> kind()
+    public boolean matches(
+        String path)
     {
-        return SseController.class;
+        return matchPath(path);
     }
 
-    @Override
-    public SseController create(
-        Configuration config,
-        ControllerBuilder<SseController> builder)
+    private boolean matchPath(
+        String path)
     {
-        return builder.setFactory(SseController::new)
-                      .build();
+        return this.path == null || this.path.reset(path).matches();
+    }
+
+    private static Matcher asMatcher(
+        String wildcard)
+    {
+        return Pattern.compile(wildcard.replace(".", "\\.").replace("*", ".*")).matcher("");
     }
 }

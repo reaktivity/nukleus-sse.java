@@ -18,7 +18,6 @@ package org.reaktivity.nukleus.sse.internal.streams.server;
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.junit.rules.RuleChain.outerRule;
 import static org.reaktivity.nukleus.sse.internal.stream.SseServerFactory.MAXIMUM_HEADER_SIZE;
-import static org.reaktivity.reaktor.test.ReaktorRule.EXTERNAL_AFFINITY_MASK;
 
 import org.junit.Rule;
 import org.junit.Test;
@@ -29,13 +28,13 @@ import org.kaazing.k3po.junit.annotation.ScriptProperty;
 import org.kaazing.k3po.junit.annotation.Specification;
 import org.kaazing.k3po.junit.rules.K3poRule;
 import org.reaktivity.reaktor.test.ReaktorRule;
+import org.reaktivity.reaktor.test.annotation.Configuration;
 
 public class TypeIT
 {
     private final K3poRule k3po = new K3poRule()
-            .addScriptRoot("route", "org/reaktivity/specification/nukleus/sse/control/route")
-            .addScriptRoot("client", "org/reaktivity/specification/sse/type")
-            .addScriptRoot("server", "org/reaktivity/specification/nukleus/sse/streams/type");
+        .addScriptRoot("net", "org/reaktivity/specification/nukleus/sse/streams/network/type")
+        .addScriptRoot("app", "org/reaktivity/specification/nukleus/sse/streams/application/type");
 
     private final TestRule timeout = new DisableOnDebug(new Timeout(10, SECONDS));
 
@@ -44,38 +43,38 @@ public class TypeIT
         .commandBufferCapacity(1024)
         .responseBufferCapacity(1024)
         .counterValuesBufferCapacity(4096)
-        .nukleus("sse"::equals)
-        .affinityMask("target#0", EXTERNAL_AFFINITY_MASK)
+        .configurationRoot("org/reaktivity/specification/nukleus/sse/config")
+        .external("app#0")
         .clean();
 
     @Rule
     public final TestRule chain = outerRule(reaktor).around(k3po).around(timeout);
 
     @Test
+    @Configuration("server.when.json")
     @Specification({
-        "${route}/server/controller",
-        "${client}/empty/request",
-        "${server}/empty/response" })
+        "${net}/empty/request",
+        "${app}/empty/response" })
     public void shouldReceiveEmptyType() throws Exception
     {
         k3po.finish();
     }
 
     @Test
+    @Configuration("server.when.json")
     @Specification({
-        "${route}/server/controller",
-        "${client}/non.empty/request",
-        "${server}/non.empty/response" })
+        "${net}/non.empty/request",
+        "${app}/non.empty/response" })
     public void shouldReceiveNonEmptyType() throws Exception
     {
         k3po.finish();
     }
 
     @Test
+    @Configuration("server.when.json")
     @Specification({
-        "${route}/server/controller",
-        "${client}/fragmented/request",
-        "${server}/fragmented/response" })
+        "${net}/fragmented/request",
+        "${app}/fragmented/response" })
     @ScriptProperty("padding " + MAXIMUM_HEADER_SIZE)
     public void shouldReceiveNonEmptyTypeWithFragmentedMessage() throws Exception
     {

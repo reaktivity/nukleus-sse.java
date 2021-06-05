@@ -18,7 +18,6 @@ package org.reaktivity.nukleus.sse.internal.test.counters;
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.junit.Assert.assertEquals;
 import static org.junit.rules.RuleChain.outerRule;
-import static org.reaktivity.reaktor.test.ReaktorRule.EXTERNAL_AFFINITY_MASK;
 
 import org.junit.Rule;
 import org.junit.Test;
@@ -28,43 +27,41 @@ import org.junit.rules.Timeout;
 import org.kaazing.k3po.junit.annotation.Specification;
 import org.kaazing.k3po.junit.rules.K3poRule;
 import org.reaktivity.reaktor.test.ReaktorRule;
+import org.reaktivity.reaktor.test.annotation.Configuration;
 
 public class ServerRouteCountersIT
 {
-    private static final long SERVER_ROUTE_ID = 0x0003000200000001L;
-
     private final K3poRule k3po = new K3poRule()
-            .addScriptRoot("route", "org/reaktivity/specification/nukleus/sse/control/route")
-            .addScriptRoot("client", "org/reaktivity/specification/sse/data")
-            .addScriptRoot("server", "org/reaktivity/specification/nukleus/sse/streams/data");
+        .addScriptRoot("net", "org/reaktivity/specification/nukleus/sse/streams/network/data")
+        .addScriptRoot("app", "org/reaktivity/specification/nukleus/sse/streams/application/data");
 
     private final TestRule timeout = new DisableOnDebug(new Timeout(10, SECONDS));
 
     private final ReaktorRule reaktor = new ReaktorRule()
         .directory("target/nukleus-itests")
-        .controller("sse"::equals)
         .commandBufferCapacity(1024)
         .responseBufferCapacity(1024)
         .counterValuesBufferCapacity(4096)
-        .nukleus("sse"::equals)
-        .affinityMask("target#0", EXTERNAL_AFFINITY_MASK)
+        .configurationRoot("org/reaktivity/specification/nukleus/sse/config")
+        .external("app#0")
         .clean();
 
     @Rule
     public final TestRule chain = outerRule(reaktor).around(k3po).around(timeout);
 
     @Test
+    @Configuration("server.when.json")
     @Specification({
-        "${route}/server/controller",
-        "${client}/non.empty/request",
-        "${server}/non.empty/response" })
+        "${net}/non.empty/request",
+        "${app}/non.empty/response" })
     public void shouldReceiveNonEmptyMessage() throws Exception
     {
         k3po.finish();
 
-        assertEquals(12, reaktor.bytesRead("sse", SERVER_ROUTE_ID));
-        assertEquals(0, reaktor.bytesWritten("sse", SERVER_ROUTE_ID));
-        assertEquals(1, reaktor.framesRead("sse", SERVER_ROUTE_ID));
-        assertEquals(0, reaktor.framesWritten("sse", SERVER_ROUTE_ID));
+        // TODO: should be counted under default.net#0
+        assertEquals(12, reaktor.bytesRead("default", "app#0"));
+        assertEquals(0, reaktor.bytesWritten("default", "app#0"));
+        assertEquals(1, reaktor.framesRead("default", "app#0"));
+        assertEquals(0, reaktor.framesWritten("default", "app#0"));
     }
 }

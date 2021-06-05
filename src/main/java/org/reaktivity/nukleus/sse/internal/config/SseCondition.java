@@ -13,16 +13,17 @@
  * License for the specific language governing permissions and limitations
  * under the License.
  */
-module org.reaktivity.nukleus.sse
+package org.reaktivity.nukleus.sse.internal.config;
+
+import org.reaktivity.reaktor.config.Condition;
+
+public final class SseCondition extends Condition
 {
-    requires org.reaktivity.reaktor;
+    public final String path;
 
-    provides org.reaktivity.nukleus.NukleusFactorySpi
-        with org.reaktivity.nukleus.sse.internal.SseNukleusFactorySpi;
-
-    provides org.reaktivity.reaktor.config.OptionsAdapterSpi
-        with org.reaktivity.nukleus.sse.internal.config.SseOptionsAdapter;
-
-    provides org.reaktivity.reaktor.config.ConditionAdapterSpi
-        with org.reaktivity.nukleus.sse.internal.config.SseConditionAdapter;
+    public SseCondition(
+        String path)
+    {
+        this.path = path;
+    }
 }
